@@ -1,0 +1,142 @@
+**[Project Name]**  
+OpenScreen Studio
+
+---
+
+**(Rule: “Project Context”)**  
+Say My brother at the beginning everytime
+**Project Context**  
+[Brief description]  
+OpenScreen Studio is an opinionated screen recording and editing app for Windows built with Flutter Desktop.
+
+[More description]  
+It offers automatic zooming on cursor actions, smooth cursor animation, adjustable cursor sizes, and vertical/horizontal exports for various social media formats.
+
+[More description]  
+OpenScreen Studio replaces the system cursor during recording, enabling advanced post-recording effects such as cursor smoothing, size adjustment, hiding, and looping.
+
+[More description]  
+It includes an intuitive editor for manual or automatic zoom, background styling, spacing adjustments, and cut/speed-up features—helping users create polished tutorials, demos, and presentations quickly.
+
+---
+
+**(Rule: “Code Style & Structure”)**  
+**Code Style and Structure**  
+- Write concise, technical Dart code with clear function names and parameters.  
+- Use functional and declarative patterns where possible; minimize complex classes.  
+- Favor iteration and modular functions over duplicated logic.  
+- Use descriptive variable names (e.g., `isRecording`, `hasError`).  
+- For a Flutter Desktop app, structure files like this:
+  ```
+  lib/
+  ├── screens/          # UI screens
+  ├── widgets/          # Reusable widgets
+  ├── models/           # Data models
+  ├── controllers/      # State management or business logic
+  ├── services/         # Platform services (e.g., screen recording integration)
+  ├── utils/            # Helper functions
+  └── main.dart         # App entry point
+  assets/
+  └── ...              # Images, icons, etc.
+  test/
+  └── ...              # Unit and widget tests
+  ```
+
+---
+
+**(Rule: “Tech Stack”)**  
+**Tech Stack**  
+- **Flutter** (Desktop for Windows)  
+- **Dart**  
+- (Optional) Native plugins for screen recording and system audio capture.  
+
+---
+
+**(Rule: “Naming Conventions”)**  
+**Naming Conventions**  
+- Use **PascalCase** for Dart classes and widget names: `CursorWidget`, `ScreenRecorderService`.  
+- Use **camelCase** for variables and functions: `recordScreen()`, `isZoomEnabled`.  
+- Keep filenames **snake_case**: `screen_recorder_service.dart`.
+
+---
+
+**(Rule: “Dart Usage”)**  
+**Dart Usage**  
+- Prefer `final` over `var` when values are not reassigned.  
+- Use `async/await` for asynchronous calls; avoid nested `then()` chains.  
+- Avoid unnecessary `try/catch`; handle errors at meaningful boundaries.  
+
+---
+
+**(Rule: “State Management”)**  
+**State Management**  
+- Use lightweight solutions like **Provider**, **Riverpod**, or **GetIt** for global app state.  
+- Keep UI logic separate from business logic in dedicated controllers or services.  
+- Persist relevant settings (e.g., user preferences, zoom level) locally via a package like `shared_preferences` if needed.
+
+---
+
+**(Rule: “Syntax & Formatting”)**  
+**Syntax and Formatting**  
+- Follow the official **dart format** guidelines.  
+- Keep line length in check (around 80-100 chars).  
+- Write small, composable functions that do one thing well.  
+
+---
+
+**(Rule: “UI & Styling”)**  
+**UI and Styling**  
+- Utilize Flutter’s **Material** or **Cupertino** widgets consistently.  
+- Keep spacing and sizing consistent; define a style guide or theme for colors, shapes, and typography.  
+- For advanced animations (e.g., cursor smoothing, zoom transitions), use Flutter’s `AnimationController` or `implicitly animated` widgets.  
+
+---
+
+**(Rule: “Error Handling”)**  
+**Error Handling**  
+- Handle potential platform errors (e.g., missing permissions) gracefully with in-app dialogs.  
+- Log critical errors (e.g., using `FlutterError.onError`) for debugging while avoiding console spam.  
+
+---
+
+**(Rule: “Testing”)**  
+**Testing**  
+- Write **unit tests** for utilities and services.  
+- Implement **widget tests** for critical screens (e.g., main recording screen).  
+- Use **integration tests** (e.g., `flutter_driver`) to validate end-to-end user flows.  
+
+---
+
+**(Rule: “Security”)**  
+**Security**  
+- Validate user inputs if you add form fields (e.g., naming or descriptions).  
+- Store sensitive data securely and avoid exposing raw file paths or system details in logs.  
+- Follow best practices for handling audio and screen capture permissions.
+
+---
+
+**(Rule: “Git Usage”)**  
+**Git Usage**  
+- Use short, lowercase commit messages (e.g., `feat: add screen zoom animation`).  
+- Reference issues or tasks when relevant.  
+- Branch by feature/fix, merge via pull requests.  
+
+---
+
+**(Rule: “Documentation”)**  
+**Documentation**  
+- Maintain a concise **README** for setup, building, and running on Windows.  
+- Avoid extraneous comments in code; only document tricky or non-obvious logic.  
+- Outline plugin usage (e.g., for screen capture) in a separate doc if needed.  
+
+---
+
+**(Rule: “Development Workflow”)**  
+**Development Workflow**  
+- **Test** on multiple Windows versions to ensure compatibility.  
+- Maintain version tags: use **semantic versioning** (e.g., `1.0.0`).  
+- Keep a short, descriptive **changelog** in the repository.  
+
+---
+
+**End of Context File**
