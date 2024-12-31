@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:path/path.dart' as path;
+import 'dart:io';
 import '../config/window_config.dart';
 import '../controllers/cursor_tracking_controller.dart';
 import '../models/cursor_position.dart';
@@ -11,6 +13,8 @@ import '../widgets/video_editor_panel.dart';
 import '../providers/cursor_settings_provider.dart';
 import '../providers/auto_zoom_provider.dart';
 import '../widgets/timeline_editor.dart';
+import '../services/ffmpeg_service.dart';
+import 'dart:async';
 
 enum VideoExportFormat {
   mp4_169, // 16:9
@@ -19,15 +23,15 @@ enum VideoExportFormat {
   gif
 }
 
-class VideoPreviewScreen extends ConsumerStatefulWidget {
+class VideoEditorScreen extends ConsumerStatefulWidget {
   final String videoPath;
-  const VideoPreviewScreen({super.key, required this.videoPath});
+  const VideoEditorScreen({super.key, required this.videoPath});
 
   @override
-  ConsumerState<VideoPreviewScreen> createState() => _VideoPreviewScreenState();
+  ConsumerState<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
-class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with SingleTickerProviderStateMixin {
+class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with TickerProviderStateMixin {
   late final player = Player();
   late final controller = VideoController(player);
   CursorPosition? _currentCursor;
@@ -71,11 +75,17 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
     ));
 
     player.open(Media(widget.videoPath));
-    player.stream.position.listen((_) => _updateCursorPosition());
+    
+    // More frequent position updates
+    player.stream.position.listen((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance.scheduleFrameCallback((_) {
+        _updateCursorPosition();
+      });
+    }, cancelOnError: false);
   }
 
   void _updateCursorPosition() {
-    if (!mounted) return;
     final cursorState = ref.read(cursorTrackingProvider);
     final autoZoom = ref.read(autoZoomProvider);
     
@@ -83,21 +93,33 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
 
     final currentTime = player.state.position.inMilliseconds;
     
-    _currentCursor = cursorState.positions.firstWhere(
-      (pos) => pos.timestamp >= currentTime,
-      orElse: () => cursorState.positions.last,
-    );
+    // Find the closest cursor position
+    int index = 0;
+    int minDiff = (cursorState.positions[0].timestamp - currentTime).abs();
+    
+    for (int i = 1; i < cursorState.positions.length; i++) {
+      final diff = (cursorState.positions[i].timestamp - currentTime).abs();
+      if (diff < minDiff) {
+        minDiff = diff;
+        index = i;
+      }
+    }
+    
+    _currentCursor = cursorState.positions[index];
 
     if (_currentCursor != null) {
-      // Only show cursor if it's within the display bounds (0.0 to 1.0 range)
       final isInBounds = _currentCursor!.x >= 0.0 && 
                         _currentCursor!.x <= 1.0 &&
                         _currentCursor!.y >= 0.0 && 
                         _currentCursor!.y <= 1.0;
                         
-      setState(() {
-        _currentOffset = isInBounds ? Offset(_currentCursor!.x, _currentCursor!.y) : Offset(-1, -1);
-      });
+      if (mounted) {
+        setState(() {
+          _currentOffset = isInBounds 
+              ? Offset(_currentCursor!.x, _currentCursor!.y)
+              : const Offset(-1, -1);
+        });
+      }
 
       if (autoZoom.enabled && isInBounds) {
         _updateZoom();
@@ -172,6 +194,128 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
     return '$minutes:$seconds';
   }
 
+  Future<void> _exportVideo(VideoExportFormat format) async {
+    final cursorState = ref.read(cursorTrackingProvider);
+    final cursorSettings = ref.read(cursorSettingsProvider);
+    final autoZoom = ref.read(autoZoomProvider);
+    
+    // Get output path
+    final inputPath = widget.videoPath;
+    final outputDir = path.dirname(inputPath);
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final outputPath = path.join(
+      outputDir,
+      'export_${format.name}_$timestamp.mp4',
+    );
+
+    // Prepare FFmpeg arguments based on format
+    final ffmpeg = ref.read(ffmpegServiceProvider);
+    final aspectRatio = switch (format) {
+      VideoExportFormat.mp4_169 => '16:9',
+      VideoExportFormat.mp4_916 => '9:16',
+      VideoExportFormat.mp4_11 => '1:1',
+      VideoExportFormat.gif => '16:9',
+    };
+
+    // Build complex filter for cursor overlay
+    final filters = <String>[
+      // Scale video to target aspect ratio
+      '[0:v]scale=${aspectRatio.split(':')[0]}*iw/${aspectRatio.split(':')[1]}:${aspectRatio.split(':')[1]}*iw/${aspectRatio.split(':')[0]}[scaled]',
+    ];
+
+    // Add cursor overlay if visible
+    if (cursorSettings.isVisible && cursorState.positions.isNotEmpty) {
+      // Create cursor overlay with proper scaling and opacity
+      filters.add(
+        '[scaled]overlay=x=${cursorState.positions.first.x}*W:y=${cursorState.positions.first.y}*H:enable=\'between(t,0,${cursorState.positions.last.timestamp/1000})\':alpha=${cursorSettings.opacity}[out]',
+      );
+    }
+
+    // Build FFmpeg command
+    final args = [
+      '-i', inputPath,
+      '-i', CursorTracker.getCursorImage(cursorState.positions.first.cursorType),
+      '-filter_complex', filters.join(';'),
+      '-map', '[out]',
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      '-crf', '23',
+    ];
+
+    // For GIF output
+    if (format == VideoExportFormat.gif) {
+      args.addAll([
+        '-f', 'gif',
+        outputPath.replaceAll('.mp4', '.gif'),
+      ]);
+    } else {
+      args.add(outputPath);
+    }
+
+    try {
+      // Show progress dialog
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Exporting video...'),
+            ],
+          ),
+        ),
+      );
+
+      // Start FFmpeg process
+      final process = await Process.start('ffmpeg', args);
+      
+      // Wait for completion
+      final exitCode = await process.exitCode;
+      
+      // Close progress dialog
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      if (exitCode == 0) {
+        // Show success message
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Video exported successfully to: $outputPath'),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Open Folder',
+              onPressed: () async {
+                await Process.run('explorer.exe', ['/select,', outputPath]);
+              },
+            ),
+          ),
+        );
+      } else {
+        throw Exception('FFmpeg process failed with exit code: $exitCode');
+      }
+    } catch (e) {
+      // Close progress dialog if open
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to export video: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _animationController.dispose();
@@ -197,7 +341,7 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
     return Scaffold(
       appBar: _isFullScreen ? null : AppBar(
         backgroundColor: Colors.black.withOpacity(0.7),
-        title: const Text('Video Preview'),
+        title: const Text('Video Editor'),
         actions: [
           IconButton(
             icon: Icon(
@@ -210,7 +354,7 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
             icon: const Icon(Icons.save),
             onSelected: (format) {
               setState(() => _selectedFormat = format);
-              // TODO: Implement export with selected format
+              _exportVideo(format);
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
@@ -286,7 +430,7 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
                           _currentOffset.dy >= 0)
                         TweenAnimationBuilder<Offset>(
                           tween: Tween(begin: _currentOffset, end: _currentOffset),
-                          duration: Duration(milliseconds: (16 * (1 - cursorSettings.smoothness)).round()),
+                          duration: const Duration(milliseconds: 4),
                           curve: Curves.linear,
                           builder: (context, offset, child) => Positioned(
                             left: videoX + (offset.dx * videoWidth),
@@ -309,6 +453,7 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> with Si
                                     CursorTracker.getCursorImage(_currentCursor!.cursorType),
                                     width: 32,
                                     height: 32,
+                                    filterQuality: FilterQuality.none,
                                   ),
                                 ),
                               ),

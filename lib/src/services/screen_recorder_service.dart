@@ -6,9 +6,12 @@ import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 import '../models/display_info.dart';
 import 'cursor_overlay_service.dart';
 import 'ffmpeg_service.dart';
+import 'preview_service.dart';
+import 'camera_device_service.dart';
 
 export 'ffmpeg_service.dart' show ffmpegServiceProvider;
 
@@ -21,8 +24,10 @@ const ERROR_INVALID_HANDLE = 6;
 const ERROR_NOT_ENOUGH_MEMORY = 8;
 const SM_CXSCREEN = 0;
 const SM_CYSCREEN = 1;
+const DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
 class ScreenRecorderService {
+  final Ref ref;
   DisplayInfo? _selectedDisplay;
   bool _isRecording = false;
   bool _isPaused = false;
@@ -36,7 +41,7 @@ class ScreenRecorderService {
   static const _previewInterval = Duration(milliseconds: 100); // 10 FPS for preview
   static const _cursorInterval = Duration(milliseconds: 8); // ~120 FPS for cursor tracking
 
-  ScreenRecorderService(this._ffmpegService);
+  ScreenRecorderService(this.ref, this._ffmpegService);
 
   Future<void> initialize() async {
     print('Initializing ScreenRecorderService...');
@@ -96,41 +101,25 @@ class ScreenRecorderService {
     }
   }
 
-  Future<void> startPreview(DisplayInfo display, {required Function(ui.Image?) onFrame}) async {
-    // Get the actual monitor info for the selected display
-    final monitorInfo = calloc<MONITORINFO>()..ref.cbSize = sizeOf<MONITORINFO>();
-    final hMonitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+  Future<void> startPreview(
+    DisplayInfo display, {
+    required Function(ui.Image?) onFrame,
+    bool isWindow = false,
+  }) async {
+    // Get the preview service from the provider
+    final previewService = ref.read(previewServiceProvider);
     
-    try {
-      if (GetMonitorInfo(hMonitor, monitorInfo) != 0) {
-        final rcMonitor = monitorInfo.ref.rcMonitor;
-        display = DisplayInfo(
-          id: display.id,
-          name: display.name,
-          width: display.width,
-          height: display.height,
-          x: rcMonitor.left,
-          y: rcMonitor.top,
-          isPrimary: display.isPrimary,
-        );
-      }
-    } finally {
-      calloc.free(monitorInfo);
-    }
-    
-    _selectedDisplay = display;
-    _onPreviewFrame = onFrame;
-    await _cursorOverlay.initialize();
-    _startPreviewCapture();
-    _startCursorTracking();
-  }
+    // Connect the onFrame callback to the preview stream
+    final subscription = previewService.previewStream.listen((frame) {
+      onFrame(frame);
+    });
 
-  void _startPreviewCapture() {
-    _previewTimer?.cancel();
-    _previewTimer = Timer.periodic(_previewInterval, (timer) {
-      if (_selectedDisplay != null && (_onPreviewFrame != null)) {
-        _captureFrame(isPreview: true);
-      }
+    // Start the preview in the service
+    previewService.startPreview(display);
+
+    // Clean up the subscription when preview is stopped
+    previewService.previewStream.listen(null, onDone: () {
+      subscription.cancel();
     });
   }
 
@@ -181,8 +170,12 @@ class ScreenRecorderService {
     int? hdcScreen;
     int? hdcMemory;
     int? hBitmap;
+    final hwnd = int.tryParse(_selectedDisplay!.id) ?? 0;
+    final isWindow = hwnd != 0;
 
     try {
+      debugPrint('Capturing frame for ${isWindow ? "window" : "screen"}: ${_selectedDisplay!.name}');
+      
       // Get the screen DC
       hdcScreen = GetDC(NULL);
       if (hdcScreen == NULL) {
@@ -218,21 +211,40 @@ class ScreenRecorderService {
         throw Exception('Failed to select bitmap into DC');
       }
 
-      // Copy screen content
-      final blitResult = BitBlt(
-        hdcMemory,  // Destination DC
-        0,          // Destination X
-        0,          // Destination Y
-        width,      // Width
-        height,     // Height
-        hdcScreen,  // Source DC
-        _selectedDisplay!.x,  // Source X
-        _selectedDisplay!.y,  // Source Y
-        SRCCOPY,
-      );
+      if (isWindow) {
+        debugPrint('Using PrintWindow for window capture');
+        // For window capture, use PrintWindow
+        final result = PrintWindow(
+          hwnd,
+          hdcMemory,
+          0, // PW_CLIENTONLY = 1, 0 for entire window
+        );
 
-      if (blitResult == 0) {
-        throw Exception('Failed to copy screen content');
+        if (result == 0) {
+          final error = GetLastError();
+          debugPrint('PrintWindow failed with error: $error');
+          throw Exception('Failed to capture window content');
+        }
+      } else {
+        debugPrint('Using BitBlt for screen capture');
+        // For screen capture, use BitBlt
+        final blitResult = BitBlt(
+          hdcMemory,
+          0,
+          0,
+          width,
+          height,
+          hdcScreen,
+          _selectedDisplay!.x,
+          _selectedDisplay!.y,
+          SRCCOPY,
+        );
+
+        if (blitResult == 0) {
+          final error = GetLastError();
+          debugPrint('BitBlt failed with error: $error');
+          throw Exception('Failed to copy screen content');
+        }
       }
 
       // Get the bitmap data
@@ -258,48 +270,40 @@ class ScreenRecorderService {
         );
 
         if (dibResult == 0) {
+          final error = GetLastError();
+          debugPrint('GetDIBits failed with error: $error');
           throw Exception('Failed to get bitmap data');
         }
 
         // Create Flutter Image
+        debugPrint('Creating Flutter Image...');
         final completer = Completer<ui.Image>();
-        try {
-          ui.decodeImageFromPixels(
-            pixels.asTypedList(width * height * 4),
-            width,
-            height,
-            ui.PixelFormat.bgra8888,
-            (ui.Image image) {
-              completer.complete(image);
-            },
-            targetWidth: width,
-            targetHeight: height,
-          );
-        } catch (error) {
-          completer.completeError(error);
-        }
-
-        try {
-          final frame = await completer.future;
-          if (isPreview && _onPreviewFrame != null) {
-            _onPreviewFrame!(frame);
-          } else {
-            frame.dispose();
-          }
-        } catch (e) {
-          print('Error processing frame: $e');
-        }
+        ui.decodeImageFromPixels(
+          pixels.asTypedList(width * height * 4),
+          width,
+          height,
+          ui.PixelFormat.bgra8888,
+          (image) {
+            completer.complete(image);
+            if (_onPreviewFrame != null) {
+              _onPreviewFrame!(image);
+            }
+          },
+          targetWidth: isPreview ? width ~/ 2 : width, // Scale down for preview only
+          targetHeight: isPreview ? height ~/ 2 : height,
+        );
+        await completer.future;
+        debugPrint('Frame captured successfully');
       } finally {
-        calloc.free(pixels);
         calloc.free(bmi);
+        calloc.free(pixels);
       }
     } catch (e) {
-      print('Error in _captureFrame: $e');
+      debugPrint('Frame capture error: $e');
     } finally {
-      // Clean up resources
-      if (hBitmap != null && hBitmap != NULL) DeleteObject(hBitmap);
-      if (hdcMemory != null && hdcMemory != NULL) DeleteDC(hdcMemory);
-      if (hdcScreen != null && hdcScreen != NULL) ReleaseDC(NULL, hdcScreen);
+      if (hBitmap != null) DeleteObject(hBitmap);
+      if (hdcMemory != null) DeleteDC(hdcMemory);
+      if (hdcScreen != null) ReleaseDC(NULL, hdcScreen);
     }
   }
 
@@ -323,6 +327,10 @@ class ScreenRecorderService {
 
     print('Starting recording of display: ${display.width}x${display.height} at (${display.x},${display.y})');
 
+    // Get selected camera if enabled
+    final selectedCamera = ref.read(selectedCameraDeviceProvider);
+    final isCameraEnabled = selectedCamera != null;
+
     // Get FFmpeg arguments from the service
     final ffmpegArgs = _ffmpegService.buildFFmpegArgs(
       outputPath: _outputPath!,
@@ -334,6 +342,7 @@ class ScreenRecorderService {
       },
       showCursor: false, // Disable cursor capture since we handle it ourselves
       captureSystemAudio: captureSystemAudio,
+      cameraDevice: selectedCamera, // Pass the camera device ID directly
     );
 
     try {
@@ -402,5 +411,5 @@ class ScreenRecorderService {
 // Add provider
 final screenRecorderServiceProvider = Provider((ref) {
   final ffmpegService = ref.watch(ffmpegServiceProvider);
-  return ScreenRecorderService(ffmpegService);
+  return ScreenRecorderService(ref, ffmpegService);
 });

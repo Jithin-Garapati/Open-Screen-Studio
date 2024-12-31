@@ -4,9 +4,8 @@ import '../../domain/entities/screen_info.dart';
 import '../controllers/recording_controller.dart';
 import '../../../../services/screen_selector_service.dart';
 
-final availableScreensProvider = FutureProvider<List<ScreenInfo>>((ref) async {
-  final displays = await ScreenSelectorService.getDisplays();
-  return displays.map((display) => ScreenInfo.fromDisplayInfo(display)).toList();
+final availableWindowsProvider = FutureProvider<List<ScreenInfo>>((ref) async {
+  return ScreenSelectorService.getWindows();
 });
 
 class ScreenSelectionDialog extends ConsumerWidget {
@@ -14,55 +13,81 @@ class ScreenSelectionDialog extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final screensAsync = ref.watch(availableScreensProvider);
+    final windowsAsync = ref.watch(availableWindowsProvider);
     final currentScreen = ref.watch(recordingControllerProvider).selectedScreen;
 
     return Dialog(
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Select Screen',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 24),
-            screensAsync.when(
-              data: (screens) => Column(
-                children: screens.map((screen) {
-                  final isSelected = currentScreen?.handle == screen.handle;
-                  return _buildScreenOption(
-                    context,
-                    screen: screen,
-                    isSelected: isSelected,
-                    onSelect: () {
-                      ref.read(recordingControllerProvider.notifier).setScreen(screen);
-                      Navigator.of(context).pop();
-                    },
-                  );
-                }).toList(),
-              ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, stack) => Center(
-                child: Text(
-                  'Error loading screens: $error',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 600),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Select Window',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      windowsAsync.when(
+                        data: (windows) {
+                          print('Loaded ${windows.length} windows'); // Debug print
+                          if (windows.isEmpty) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: Text('No windows found'),
+                              ),
+                            );
+                          }
+                          return Column(
+                            children: windows.map((window) {
+                              final isSelected = currentScreen?.handle == window.handle;
+                              return _buildOption(
+                                context,
+                                screen: window,
+                                isSelected: isSelected,
+                                onSelect: () {
+                                  ref.read(recordingControllerProvider.notifier).setScreen(window);
+                                  Navigator.of(context).pop();
+                                },
+                              );
+                            }).toList(),
+                          );
+                        },
+                        loading: () => const Center(child: CircularProgressIndicator()),
+                        error: (error, stack) {
+                          print('Error loading windows: $error'); // Debug print
+                          return Center(
+                            child: Text(
+                              'Error loading windows: $error',
+                              style: TextStyle(color: Theme.of(context).colorScheme.error),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildScreenOption(
+  Widget _buildOption(
     BuildContext context, {
     required ScreenInfo screen,
     required bool isSelected,
@@ -94,7 +119,7 @@ class ScreenSelectionDialog extends ConsumerWidget {
             child: Row(
               children: [
                 Icon(
-                  Icons.desktop_windows_rounded,
+                  Icons.window_rounded,
                   color: isSelected
                       ? theme.colorScheme.primary
                       : theme.colorScheme.onSurface.withOpacity(0.7),
@@ -105,7 +130,7 @@ class ScreenSelectionDialog extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        screen.name,
+                        screen.windowTitle ?? 'Unknown Window',
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: isSelected
                               ? theme.colorScheme.primary
@@ -114,7 +139,7 @@ class ScreenSelectionDialog extends ConsumerWidget {
                         ),
                       ),
                       Text(
-                        '${screen.width}x${screen.height}${screen.isPrimary ? ' (Primary)' : ''}',
+                        '${screen.width}x${screen.height}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurface.withOpacity(0.7),
                         ),

@@ -6,6 +6,8 @@ class ScreenInfo {
   final int width;
   final int height;
   final bool isPrimary;
+  final ScreenType type;
+  final String? windowTitle; // Only for windows
 
   const ScreenInfo({
     required this.handle,
@@ -13,6 +15,8 @@ class ScreenInfo {
     required this.width,
     required this.height,
     required this.isPrimary,
+    this.type = ScreenType.display,
+    this.windowTitle,
   });
 
   factory ScreenInfo.fromDisplayInfo(DisplayInfo display) {
@@ -22,9 +26,34 @@ class ScreenInfo {
       width: display.width,
       height: display.height,
       isPrimary: display.isPrimary,
+      type: ScreenType.display,
+    );
+  }
+
+  factory ScreenInfo.fromWindow({
+    required int handle,
+    required String title,
+    required int width,
+    required int height,
+  }) {
+    return ScreenInfo(
+      handle: handle,
+      name: title,
+      width: width,
+      height: height,
+      isPrimary: false,
+      type: ScreenType.window,
+      windowTitle: title,
     );
   }
 
   @override
-  String toString() => '$name (${width}x$height)';
+  String toString() => type == ScreenType.window 
+    ? '$windowTitle (${width}x$height)' 
+    : '$name (${width}x$height)';
+}
+
+enum ScreenType {
+  display,
+  window,
 } 

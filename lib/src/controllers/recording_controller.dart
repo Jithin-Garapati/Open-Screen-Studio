@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:ui' as ui;
-import 'package:window_manager/window_manager.dart';
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+import 'package:win32/win32.dart';
 import '../models/display_info.dart';
 import '../services/screen_selector_service.dart';
 import '../services/screen_recorder_service.dart';
 import '../services/cursor_overlay_service.dart';
-import '../config/window_config.dart';
 import 'cursor_tracking_controller.dart';
 import '../features/recording/domain/entities/screen_info.dart';
-import '../providers/providers.dart';
-import '../services/audio_device_service.dart';
 
 enum RecordingStatus {
   idle,
@@ -75,21 +74,36 @@ class RecordingController extends StateNotifier<RecordingState> {
   bool _isInitialized = false;
   BuildContext? _context;
   final Ref ref;
+  Future<void>? _initializationFuture;
 
   RecordingController(this.ref) : 
     _screenRecorderService = ref.read(screenRecorderServiceProvider),
     super(const RecordingState()) {
-    _initialize();
+    _initializationFuture = _initialize();
   }
 
   void updateContext(BuildContext context) {
     _context = context;
   }
 
+  Future<void> ensureInitialized() async {
+    if (_initializationFuture != null) {
+      await _initializationFuture;
+      _initializationFuture = null;
+    }
+  }
+
   Future<void> _initialize() async {
-    await _screenRecorderService.initialize();
-    await _cursorOverlayService.initialize();
-    _isInitialized = true;
+    if (_isInitialized) return;
+    
+    try {
+      await _screenRecorderService.initialize();
+      await _cursorOverlayService.initialize();
+      _isInitialized = true;
+    } catch (e) {
+      print('Error initializing recording controller: $e');
+      rethrow;
+    }
   }
 
   Future<List<DisplayInfo>> getDisplays() async {
@@ -105,40 +119,103 @@ class RecordingController extends StateNotifier<RecordingState> {
   }
 
   void selectDisplay(DisplayInfo display) {
-    state = state.copyWith(selectedDisplay: display);
+    debugPrint('Selecting display: ${display.name}');
+    state = state.copyWith(
+      selectedDisplay: display,
+      selectedScreen: null, // Clear selected screen when selecting a display
+    );
+    
+    // Start preview immediately after selecting display
     _startPreview();
+    debugPrint('Started preview for display: ${display.name}');
   }
 
   void setScreen(ScreenInfo screen) {
-    // Convert ScreenInfo to DisplayInfo for backward compatibility
-    final display = DisplayInfo(
-      id: screen.handle.toString(),
-      name: screen.name,
-      width: screen.width,
-      height: screen.height,
-      x: 0, // These values will be set correctly when starting preview/recording
-      y: 0,
-      isPrimary: screen.isPrimary,
-    );
+    debugPrint('Setting screen: ${screen.windowTitle} (${screen.width}x${screen.height})');
     
-    state = state.copyWith(
-      selectedDisplay: display,
-      selectedScreen: screen,
-    );
-    _startPreview();
+    // Get window coordinates for windows
+    if (screen.type == ScreenType.window) {
+      final hwnd = screen.handle;
+      final rect = calloc<RECT>();
+      try {
+        if (GetWindowRect(hwnd, rect) != 0) {
+          final width = rect.ref.right - rect.ref.left;
+          final height = rect.ref.bottom - rect.ref.top;
+          debugPrint('Window coordinates: (${rect.ref.left},${rect.ref.top}) size: ${width}x$height');
+          
+          // Convert ScreenInfo to DisplayInfo with proper coordinates
+          final display = DisplayInfo(
+            id: screen.handle.toString(),
+            name: screen.windowTitle ?? screen.name,
+            width: width,
+            height: height,
+            x: rect.ref.left,
+            y: rect.ref.top,
+            isPrimary: false,
+          );
+          
+          state = state.copyWith(
+            selectedDisplay: display,
+            selectedScreen: screen,
+          );
+          _startPreview();
+        } else {
+          final error = GetLastError();
+          debugPrint('Failed to get window coordinates: $error');
+        }
+      } finally {
+        calloc.free(rect);
+      }
+    } else {
+      // Handle regular displays
+      final display = DisplayInfo(
+        id: screen.handle.toString(),
+        name: screen.name,
+        width: screen.width,
+        height: screen.height,
+        x: 0, // Regular displays start at 0,0
+        y: 0,
+        isPrimary: screen.isPrimary,
+      );
+      
+      state = state.copyWith(
+        selectedDisplay: display,
+        selectedScreen: screen,
+      );
+      _startPreview();
+    }
   }
 
   void _startPreview() {
     if (!_isInitialized) {
-      _initialize().then((_) => _startPreview());
+      debugPrint('Not initialized, initializing first...');
+      _initialize().then((_) {
+        debugPrint('Initialization complete, starting preview...');
+        _startPreview();
+      });
       return;
     }
 
     if (state.selectedDisplay != null) {
+      final screen = state.selectedScreen;
+      final display = state.selectedDisplay!;
+      
+      debugPrint('Starting preview for display: ${display.name}');
+      
+      // Stop any existing preview first
+      _screenRecorderService.stopPreview();
+      
+      // Start new preview
       _screenRecorderService.startPreview(
-        state.selectedDisplay!,
-        onFrame: _notifyPreviewListeners,
+        display,
+        onFrame: (frame) {
+          debugPrint('Received preview frame');
+          _notifyPreviewListeners(frame);
+        },
+        isWindow: screen?.type == ScreenType.window,
       );
+    } else {
+      debugPrint('No display selected for preview');
     }
   }
 
@@ -233,7 +310,7 @@ class RecordingController extends StateNotifier<RecordingState> {
   Future<String?> stopRecording() async {
     try {
       final outputPath = await _screenRecorderService.stopRecording();
-      if (_context != null && outputPath != null) {
+      if (_context != null) {
         ref.read(cursorTrackingProvider.notifier).stopTracking(outputPath, _context!);
       }
       _cursorOverlayService.stopRecording();

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/cursor_position.dart';
-import '../screens/video_preview_screen.dart';
+import '../screens/video_editor_screen.dart';
 import '../services/cursor_tracker.dart';
 
 class RecordingState {
@@ -61,7 +61,7 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
     // Navigate to preview screen
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => VideoPreviewScreen(videoPath: videoPath),
+        builder: (context) => VideoEditorScreen(videoPath: videoPath),
       ),
     );
   }

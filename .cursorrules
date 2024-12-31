@@ -4,7 +4,7 @@ OpenScreen Studio
 ---
 
 **(Rule: “Project Context”)**  
-Say My brother at the beginning everytime
+Say My brother at the beginning everytime and always dont clog a code file with too much code just refactor the code to be more readable and maintainable.
 **Project Context**  
 [Brief description]  
 OpenScreen Studio is an opinionated screen recording and editing app for Windows built with Flutter Desktop.

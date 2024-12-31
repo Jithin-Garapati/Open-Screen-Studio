@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../widgets/recording_config_panel.dart';
-import '../services/audio_device_service.dart';
 
 class FFmpegService {
   final ProviderRef ref;
@@ -10,6 +9,7 @@ class FFmpegService {
   List<String> buildFFmpegArgs({
     required String outputPath,
     String? audioDevice,
+    String? cameraDevice,
     Map<String, int>? region,
     bool showCursor = true,
     bool captureSystemAudio = false,
@@ -38,6 +38,14 @@ class FFmpegService {
 
     args.addAll(['-i', 'desktop']);
 
+    // Add camera input if specified
+    if (cameraDevice != null) {
+      args.addAll([
+        '-f', 'dshow',
+        '-i', 'video=$cameraDevice',
+      ]);
+    }
+
     // Add system audio input if enabled
     if (captureSystemAudio) {
       print('Adding system audio capture');
@@ -57,7 +65,22 @@ class FFmpegService {
       ]);
     }
 
+    // Build filter complex for combining video streams
+    final filters = <String>[];
+    if (cameraDevice != null) {
+      // Scale camera input to a reasonable size (e.g., 320x240) and position it in the corner
+      filters.add('[1:v]scale=320:-1[camera]');
+      filters.add('[0:v][camera]overlay=main_w-overlay_w-10:main_h-overlay_h-10[outv]');
+    }
+
     // Output options
+    if (filters.isNotEmpty) {
+      args.addAll([
+        '-filter_complex', filters.join(';'),
+        '-map', '[outv]',
+      ]);
+    }
+
     args.addAll([
       '-c:v', hwAccel ? 'h264_nvenc' : 'libx264',
       '-preset', hwAccel ? 'p4' : 'veryfast',
@@ -97,12 +120,14 @@ class FFmpegService {
   String getFfmpegCommand({
     required String outputPath,
     String? audioDevice,
+    String? cameraDevice,
     Map<String, int>? region,
     bool showCursor = true,
   }) {
     final args = buildFFmpegArgs(
       outputPath: outputPath,
       audioDevice: audioDevice,
+      cameraDevice: cameraDevice,
       region: region,
       showCursor: showCursor,
     );

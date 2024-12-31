@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/cursor_position.dart';
 import '../services/cursor_tracker.dart';
-import '../screens/video_preview_screen.dart';
+import '../screens/video_editor_screen.dart';
 import '../models/display_info.dart';
 
 class CursorTrackingState {
@@ -56,7 +56,7 @@ class CursorTrackingController extends StateNotifier<CursorTrackingState> {
     // Navigate to preview screen
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => VideoPreviewScreen(
+        builder: (context) => VideoEditorScreen(
           videoPath: videoPath,
         ),
       ),
