@@ -5,24 +5,22 @@ class TimelineRulerPainter extends CustomPainter {
   final Duration duration;
   final double zoom;
   final bool isScrolling;
+  final bool showTimestamps;
+  final double height;
 
-  TimelineRulerPainter({
+  const TimelineRulerPainter({
     required this.secondWidth,
     required this.duration,
     required this.zoom,
     required this.isScrolling,
+    this.showTimestamps = false,
+    this.height = 32,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (isScrolling) return; // Skip ruler drawing while scrolling for better performance
-
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.1)
-      ..strokeWidth = 1;
-
-    final majorPaint = Paint()
-      ..color = Colors.white.withOpacity(0.2)
+      ..color = Colors.white.withOpacity(isScrolling ? 0.3 : 0.5)
       ..strokeWidth = 1;
 
     final textPainter = TextPainter(
@@ -30,69 +28,63 @@ class TimelineRulerPainter extends CustomPainter {
       textAlign: TextAlign.center,
     );
 
-    // Calculate marker intervals based on zoom
-    final markerInterval = _calculateMarkerInterval(zoom);
-    final majorInterval = markerInterval * 5;
-
-    // Draw vertical lines and time markers
+    // Draw major ticks (seconds)
     for (var i = 0; i <= duration.inSeconds; i++) {
-      final x = i * secondWidth;
-      final seconds = i;
-      final isMajor = seconds % majorInterval == 0;
-      final isMinor = seconds % markerInterval == 0;
+      final x = i * secondWidth * zoom;
+      if (x > size.width) break;
 
-      if (isMajor || isMinor) {
-        // Draw marker line
-        canvas.drawLine(
-          Offset(x, isMajor ? 0 : size.height * 0.3),
-          Offset(x, size.height),
-          isMajor ? majorPaint : paint,
+      // Draw major tick (from top)
+      canvas.drawLine(
+        Offset(x, 0),  // Start from top
+        Offset(x, 12), // 12px down
+        paint,
+      );
+
+      // Draw timestamp for major ticks (at bottom)
+      if (showTimestamps && i % 5 == 0) {  // Show timestamp every 5 seconds
+        final minutes = (i / 60).floor();
+        final seconds = i % 60;
+        final timestamp = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+        
+        textPainter.text = TextSpan(
+          text: timestamp,
+          style: TextStyle(
+            color: Colors.white.withOpacity(isScrolling ? 0.3 : 0.7),
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
         );
+        
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(x - textPainter.width / 2, height - 16),  // Position at bottom with 4px padding
+        );
+      }
 
-        // Draw time label
-        if (isMajor || (isMinor && zoom > 0.5)) {
-          final time = Duration(seconds: seconds);
-          final text = _formatDuration(time, isMajor);
-          textPainter.text = TextSpan(
-            text: text,
-            style: TextStyle(
-              color: Colors.white.withOpacity(isMajor ? 0.8 : 0.5),
-              fontSize: isMajor ? 11 : 9,
-              fontWeight: isMajor ? FontWeight.w500 : FontWeight.normal,
-            ),
-          );
-          textPainter.layout();
-          textPainter.paint(
-            canvas,
-            Offset(x - textPainter.width / 2, isMajor ? 2 : 8),
+      // Draw minor ticks (100ms)
+      if (zoom > 0.5) {  // Only show minor ticks when zoomed in enough
+        for (var j = 1; j < 10; j++) {
+          final minorX = x + (j * secondWidth * zoom / 10);
+          if (minorX > size.width) break;
+          
+          canvas.drawLine(
+            Offset(minorX, 0),  // Start from top
+            Offset(minorX, 6),  // 6px down for minor ticks
+            paint..color = Colors.white.withOpacity(isScrolling ? 0.15 : 0.25),
           );
         }
       }
     }
   }
 
-  int _calculateMarkerInterval(double zoom) {
-    if (zoom >= 2.0) return 1;      // 1 second
-    if (zoom >= 1.0) return 5;      // 5 seconds
-    if (zoom >= 0.5) return 15;     // 15 seconds
-    if (zoom >= 0.25) return 30;    // 30 seconds
-    return 60;                      // 1 minute
-  }
-
-  String _formatDuration(Duration duration, bool isMajor) {
-    final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds % 60;
-
-    if (minutes > 0) {
-      return isMajor ? '$minutes:${seconds.toString().padLeft(2, '0')}' : seconds.toString();
-    }
-    return seconds.toString();
-  }
-
   @override
-  bool shouldRepaint(TimelineRulerPainter oldDelegate) =>
-      oldDelegate.secondWidth != secondWidth ||
-      oldDelegate.duration != duration ||
-      oldDelegate.zoom != zoom ||
-      oldDelegate.isScrolling != isScrolling;
+  bool shouldRepaint(TimelineRulerPainter oldDelegate) {
+    return oldDelegate.secondWidth != secondWidth ||
+           oldDelegate.duration != duration ||
+           oldDelegate.zoom != zoom ||
+           oldDelegate.isScrolling != isScrolling ||
+           oldDelegate.showTimestamps != showTimestamps ||
+           oldDelegate.height != height;
+  }
 } 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/timeline_provider.dart';
 import '../../constants/timeline_colors.dart';
+import '../../models/timeline_segment.dart';
 
 class TimelineToolbar extends ConsumerWidget {
   final Duration currentPosition;
@@ -33,78 +34,17 @@ class TimelineToolbar extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          // Left section - Basic editing controls
           _buildEditButtons(),
-          const SizedBox(width: 24),
-          // Center section - Playback controls
-          Row(
-            children: [
-              _buildToolbarButton(
-                icon: timeline.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                tooltip: timeline.isPlaying ? 'Pause' : 'Play',
-                color: kAccentColor,
-                onPressed: () => timelineNotifier.setPlaying(!timeline.isPlaying),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: kBorderColor),
-                ),
-                child: Text(
-                  _formatDuration(currentPosition),
-                  style: const TextStyle(
-                    color: kTextColor,
-                    fontSize: 13,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          const SizedBox(width: 16),
+          _buildLayerButtons(ref),
           const Spacer(),
-          // Right section - View controls
-          Row(
-            children: [
-              _buildToolbarToggle(
-                icon: Icons.grid_on_rounded,
-                tooltip: 'Snap to Grid',
-                isActive: timeline.snapEnabled,
-                onPressed: () => timelineNotifier.setSnapEnabled(!timeline.snapEnabled),
-              ),
-              const SizedBox(width: 20),
-              // Zoom controls
-              _buildToolbarButton(
-                icon: Icons.zoom_out_rounded,
-                tooltip: 'Zoom Out',
-                onPressed: () => timelineNotifier.setZoom(timeline.zoom / 1.5),
-              ),
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: kBorderColor),
-                ),
-                child: Text(
-                  '${(timeline.zoom * 100).round()}%',
-                  style: const TextStyle(
-                    color: kTextColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              _buildToolbarButton(
-                icon: Icons.zoom_in_rounded,
-                tooltip: 'Zoom In',
-                onPressed: () => timelineNotifier.setZoom(timeline.zoom * 1.5),
-              ),
-            ],
+          Text(
+            _formatDuration(currentPosition),
+            style: const TextStyle(
+              color: kTextColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -114,89 +54,62 @@ class TimelineToolbar extends ConsumerWidget {
   Widget _buildEditButtons() {
     return Row(
       children: [
-        _buildToolbarButton(
-          icon: Icons.content_cut_rounded,
-          tooltip: 'Split at Playhead',
+        IconButton(
+          icon: const Icon(Icons.content_cut, size: 20),
           onPressed: onSplitClip,
+          tooltip: 'Split Clip',
         ),
-        const SizedBox(width: 8),
-        _buildToolbarButton(
-          icon: Icons.content_copy_rounded,
-          tooltip: 'Trim to Selection',
+        IconButton(
+          icon: const Icon(Icons.crop, size: 20),
           onPressed: onTrimClip,
+          tooltip: 'Trim Clip',
         ),
-        const SizedBox(width: 8),
-        _buildToolbarButton(
-          icon: Icons.delete_rounded,
-          tooltip: 'Delete Selected',
+        IconButton(
+          icon: const Icon(Icons.delete_outline, size: 20),
           onPressed: onDeleteSelected,
+          tooltip: 'Delete Selected',
         ),
       ],
     );
   }
 
-  Widget _buildToolbarButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onPressed,
-    Color? color,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.black12,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: kBorderColor),
-          ),
-          child: Icon(
-            icon,
-            size: 20,
-            color: color ?? kTextColor,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _buildLayerButtons(WidgetRef ref) {
+    final timelineNotifier = ref.read(timelineProvider.notifier);
 
-  Widget _buildToolbarToggle({
-    required IconData icon,
-    required String tooltip,
-    required bool isActive,
-    required VoidCallback onPressed,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: isActive ? kAccentColor.withOpacity(0.15) : Colors.black12,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isActive ? kAccentColor : kBorderColor,
-            ),
-          ),
-          child: Icon(
-            icon,
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(
+            Icons.zoom_in,
             size: 20,
-            color: isActive ? kAccentColor : kTextColor,
+            color: kAccentColor,
           ),
+          onPressed: () => timelineNotifier.addLayerAtTime(
+            currentPosition.inMilliseconds, 
+            LayerType.zoom,
+          ),
+          tooltip: 'Add Zoom Layer',
         ),
-      ),
+        IconButton(
+          icon: const Icon(
+            Icons.content_cut,
+            size: 20,
+            color: kAccentColor,
+          ),
+          onPressed: () => timelineNotifier.addLayerAtTime(
+            currentPosition.inMilliseconds, 
+            LayerType.trim,
+          ),
+          tooltip: 'Add Trim Layer',
+        ),
+      ],
     );
   }
 
   String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return '$minutes:$seconds';
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final milliseconds = duration.inMilliseconds.remainder(1000).toString().padLeft(3, '0');
+    return '$minutes:$seconds.$milliseconds';
   }
 } 

@@ -21,6 +21,11 @@ class TimelineClip extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final timelineNotifier = ref.read(timelineProvider.notifier);
+    final layers = segment.properties['isMainClip'] == true 
+      ? timelineNotifier.getLayersForClip(segment)
+      : <TimelineSegment>[];
+
     return GestureDetector(
       onHorizontalDragStart: (details) {
         // Handle drag start
@@ -35,7 +40,6 @@ class TimelineClip extends ConsumerWidget {
         final clipDuration = segment.endTime - segment.startTime;
         
         if (newStartTime >= 0 && newStartTime + clipDuration <= segment.endTime) {
-          final timelineNotifier = ref.read(timelineProvider.notifier);
           final updatedClip = segment.copyWith(
             startTime: newStartTime,
             endTime: newStartTime + clipDuration,
@@ -45,7 +49,7 @@ class TimelineClip extends ConsumerWidget {
         }
       },
       child: Container(
-        height: 80,
+        height: 80 + (layers.length * 24),
         decoration: BoxDecoration(
           color: kAccentColor.withOpacity(0.15),
           border: Border.all(
@@ -61,45 +65,117 @@ class TimelineClip extends ConsumerWidget {
             ),
           ],
         ),
-        child: Stack(
+        child: Column(
           children: [
-            // Thumbnails
-            if (thumbnails != null)
-              Row(
-                children: thumbnails!.asMap().entries.map((entry) {
-                  return Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          right: BorderSide(
-                            color: Colors.black.withOpacity(0.2),
+            // Main clip content
+            Container(
+              height: 80,
+              child: Stack(
+                children: [
+                  // Thumbnails
+                  if (thumbnails != null)
+                    Row(
+                      children: thumbnails!.asMap().entries.map((entry) {
+                        return Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border(
+                                right: BorderSide(
+                                  color: Colors.black.withOpacity(0.2),
+                                ),
+                              ),
+                            ),
+                            child: RawImage(
+                              image: entry.value,
+                              fit: BoxFit.cover,
+                            ),
                           ),
+                        );
+                      }).toList(),
+                    )
+                  else
+                    const Center(
+                      child: Text(
+                        'Generating Thumbnails...',
+                        style: TextStyle(
+                          color: kTextColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                      child: RawImage(
-                        image: entry.value,
-                        fit: BoxFit.cover,
-                      ),
                     ),
-                  );
-                }).toList(),
-              )
-            else
-              const Center(
-                child: Text(
-                  'Generating Thumbnails...',
-                  style: TextStyle(
-                    color: kTextColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  // Trim handles for main clip
+                  if (segment.properties['isMainClip'] == true) ...[
+                    _buildTrimHandle(context, ref, true),
+                    _buildTrimHandle(context, ref, false),
+                  ],
+                ],
+              ),
+            ),
+            // Layer tracks
+            if (segment.properties['isMainClip'] == true) ...[
+              ...layers.map((layer) => _buildLayerTrack(layer, ref)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLayerTrack(TimelineSegment layer, WidgetRef ref) {
+    final timelineNotifier = ref.read(timelineProvider.notifier);
+    
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) {
+        final delta = details.delta.dx;
+        final timelineDelta = (delta / timelineWidth) * layer.endTime;
+        
+        final newStartTime = layer.startTime + timelineDelta.round();
+        final layerDuration = layer.endTime - layer.startTime;
+        
+        if (newStartTime >= segment.startTime && 
+            newStartTime + layerDuration <= segment.endTime) {
+          final updatedLayer = layer.copyWith(
+            startTime: newStartTime,
+            endTime: newStartTime + layerDuration,
+          );
+          timelineNotifier.updateSegment(layer, updatedLayer);
+        }
+      },
+      child: Container(
+        height: 24,
+        margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+        decoration: BoxDecoration(
+          color: layer.color,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                layer.layerType.toString().split('.').last.toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            // Trim handles
-            if (segment.properties['isMainClip'] == true) ...[
-              _buildTrimHandle(context, ref, true),
-              _buildTrimHandle(context, ref, false),
-            ],
+            ),
+            if (layer.layerType == LayerType.zoom)
+              Expanded(
+                child: Slider(
+                  value: layer.layerProperties['zoomLevel'] ?? 1.0,
+                  min: 1.0,
+                  max: 3.0,
+                  onChanged: (value) {
+                    timelineNotifier.updateLayerProperties(
+                      layer, 
+                      {'zoomLevel': value},
+                    );
+                  },
+                ),
+              ),
           ],
         ),
       ),

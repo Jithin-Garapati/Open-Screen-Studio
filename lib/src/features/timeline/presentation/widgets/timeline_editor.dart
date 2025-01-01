@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/timeline_provider.dart';
 import '../../constants/timeline_colors.dart';
+import '../../models/timeline_segment.dart';
 import '../painters/timeline_grid_painter.dart';
 import '../painters/timeline_ruler_painter.dart';
+import '../painters/timeline_grid_overlay_painter.dart';
 import 'timeline_clip.dart';
 import 'timeline_playhead.dart';
 import 'timeline_toolbar.dart';
@@ -34,10 +37,10 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
   late final AnimationController _scrollAnimationController;
   bool _isScrolling = false;
   Timer? _scrollEndTimer;
-  bool _isDragging = false;
+  final bool _isDragging = false;
   bool _isDraggingPlayhead = false;
   List<ui.Image>? _thumbnails;
-  bool _isGeneratingThumbnails = false;
+  final bool _isGeneratingThumbnails = false;
   double? _timelineDragPosition;
   bool _isMovingPlayhead = false;
 
@@ -213,6 +216,18 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
     });
   }
 
+  double _calculateTimelineHeight(TimelineState timeline) {
+    // Get the maximum track offset used
+    final maxTrackOffset = timeline.segments
+        .where((s) => s.isLayer)
+        .map((s) => s.properties['trackOffset'] ?? 0)
+        .fold(0, (max, value) => math.max(max as int, value as int));
+    
+    // Calculate height based on number of tracks
+    // Base height (for main clip) + (number of layer tracks * track height) + padding
+    return 80.0 + ((maxTrackOffset + 1) * 64.0) + 16.0;
+  }
+
   @override
   void dispose() {
     _scrollEndTimer?.cancel();
@@ -296,31 +311,13 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                 physics: const BouncingScrollPhysics(),
                                 child: SizedBox(
                                   width: timelineWidth,
-                                  height: constraints.maxHeight,
+                                  height: 160,  // Fixed height
                                   child: Stack(
+                                    clipBehavior: Clip.none,
                                     children: [
-                                      Column(
-                                        children: [
-                                          Container(
-                                            height: 32,
-                                            margin: const EdgeInsets.only(bottom: 4),
-                                            decoration: BoxDecoration(
-                                              color: kSurfaceColor.withOpacity(0.5),
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: CustomPaint(
-                                              size: Size(timelineWidth, 32),
-                                              painter: TimelineRulerPainter(
-                                                secondWidth: pixelsPerSecond,
-                                                duration: widget.videoDuration,
-                                                zoom: timeline.zoom,
-                                                isScrolling: _isScrolling,
-                                              ),
-                                            ),
-                                          ),
-                                          Expanded(
+                                      // Timeline background
+                                      Positioned.fill(
                                             child: Container(
-                                              margin: const EdgeInsets.symmetric(vertical: 4),
                                               decoration: BoxDecoration(
                                                 color: kSurfaceColor,
                                                 borderRadius: BorderRadius.circular(12),
@@ -329,20 +326,115 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                   width: 1,
                                                 ),
                                               ),
-                                              child: ClipRRect(
-                                                borderRadius: BorderRadius.circular(12),
+                                          child: Column(
+                                            children: [
+                                              // Top timeline area for playhead interaction
+                                              Container(
+                                                height: 48,
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFF1A1A1A),  // Darker background
+                                                  border: Border(
+                                                    bottom: BorderSide(
+                                                      color: const Color(0xFF2A2A2A),  // Slightly lighter border
+                                                      width: 1,
+                                                    ),
+                                                  ),
+                                                  gradient: LinearGradient(  // Subtle gradient
+                                                    begin: Alignment.topCenter,
+                                                    end: Alignment.bottomCenter,
+                                                    colors: [
+                                                      const Color(0xFF1A1A1A),
+                                                      const Color(0xFF1D1D1D),
+                                                    ],
+                                                  ),
+                                                  boxShadow: [  // Inner shadow effect
+                                                    BoxShadow(
+                                                      color: Colors.black.withOpacity(0.3),
+                                                      blurRadius: 4,
+                                                      offset: const Offset(0, 1),
+                                                    ),
+                                                  ],
+                                                ),
                                                 child: Stack(
-                                                  clipBehavior: Clip.none,
                                                   children: [
+                                                    // Grid overlay for extra coolness
+                                                    Positioned.fill(
+                                                      child: CustomPaint(
+                                                        painter: TimelineGridOverlayPainter(
+                                                          secondWidth: pixelsPerSecond,
+                                                          zoom: timeline.zoom,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    // Ruler with timestamps
                                                     CustomPaint(
-                                                      size: Size(timelineWidth, constraints.maxHeight),
-                                                      painter: TimelineGridPainter(
+                                                      size: Size(timelineWidth, 48),
+                                                      painter: TimelineRulerPainter(
                                                         secondWidth: pixelsPerSecond,
                                                         duration: widget.videoDuration,
                                                         zoom: timeline.zoom,
                                                         isScrolling: _isScrolling,
+                                                        showTimestamps: true,
+                                                        height: 48,
                                                       ),
                                                     ),
+                                                    // Edge gradients
+                                                    Positioned(
+                                                      left: 0,
+                                                      top: 0,
+                                                      bottom: 0,
+                                                      width: 32,
+                                                      child: Container(
+                                                        decoration: BoxDecoration(
+                                                          gradient: LinearGradient(
+                                                            begin: Alignment.centerLeft,
+                                                            end: Alignment.centerRight,
+                                                            colors: [
+                                                              const Color(0xFF1A1A1A),
+                                                              const Color(0xFF1A1A1A).withOpacity(0.0),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    Positioned(
+                                                      right: 0,
+                                                      top: 0,
+                                                      bottom: 0,
+                                                      width: 32,
+                                                      child: Container(
+                                                        decoration: BoxDecoration(
+                                                          gradient: LinearGradient(
+                                                            begin: Alignment.centerRight,
+                                                            end: Alignment.centerLeft,
+                                                            colors: [
+                                                              const Color(0xFF1A1A1A),
+                                                              const Color(0xFF1A1A1A).withOpacity(0.0),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              // Main timeline grid
+                                              Expanded(
+                                                child: CustomPaint(
+                                                  size: Size(timelineWidth, 160),
+                                                  painter: TimelineGridPainter(
+                                                    secondWidth: pixelsPerSecond,
+                                                    duration: widget.videoDuration,
+                                                    zoom: timeline.zoom,
+                                                    isScrolling: _isScrolling,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      // Main clips
                                                     ...timeline.segments
                                                         .where((segment) => segment.properties['isMainClip'] == true)
                                                         .map((mainClip) {
@@ -360,7 +452,247 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                           onSeek: widget.onSeek,
                                                         ),
                                                       );
-                                                    }),
+                                      }).toList(),
+                                      // Layer tracks
+                                      ...timeline.segments
+                                          .where((segment) => segment.isLayer)
+                                          .map((layer) {
+                                        final left = (layer.startTime / widget.videoDuration.inMilliseconds) * timelineWidth;
+                                        final width = ((layer.endTime - layer.startTime) / widget.videoDuration.inMilliseconds) * timelineWidth;
+                                        
+                                        final trackOffset = layer.properties['trackOffset'] as int? ?? 0;
+                                        final baseHeight = 48.0;  // Base layer height
+                                        final layerHeight = baseHeight;
+                                        final spacing = 4.0;  // Space between layers
+                                        final topTimelineHeight = 48.0;  // Height of the top timeline area
+                                        final top = topTimelineHeight + 8.0 + (trackOffset * (layerHeight + spacing));  // Add topTimelineHeight to push layers down
+                                        
+                                        return Positioned(
+                                          left: left,
+                                          top: top,
+                                          height: layerHeight,
+                                          width: width,
+                                          child: MouseRegion(
+                                            cursor: SystemMouseCursors.move,
+                                            child: GestureDetector(
+                                              onTap: () {
+                                                // Move playhead to layer start and select the layer
+                                                widget.onSeek(Duration(milliseconds: layer.startTime));
+                                                timelineNotifier.selectSegment(layer);
+                                              },
+                                              onHorizontalDragStart: (details) {
+                                                timelineNotifier.selectSegment(layer);
+                                              },
+                                              onHorizontalDragUpdate: (details) {
+                                                final pixelDelta = details.delta.dx;
+                                                final timeDelta = (pixelDelta / timelineWidth * widget.videoDuration.inMilliseconds).round() * 8;
+                                                final newStartTime = layer.startTime + timeDelta;
+                                                final duration = layer.endTime - layer.startTime;
+                                                
+                                                // Only prevent going before 0
+                                                if (newStartTime >= 0) {
+                                                  timelineNotifier.updateSegment(
+                                                    layer,
+                                                    layer.copyWith(
+                                                      startTime: newStartTime,
+                                                      endTime: newStartTime + duration,
+                                                    ),
+                                                  );
+                                                }
+                                              },
+                                              child: Stack(
+                                                children: [
+                                                  // Main layer content
+                                                  Container(
+                                                    margin: const EdgeInsets.symmetric(vertical: 2),
+                                                    width: double.infinity,
+                                                    height: layerHeight - 4,  // Account for margin
+                                                    decoration: BoxDecoration(
+                                                      color: layer.layerType == LayerType.zoom 
+                                                        ? (layer.isSelected 
+                                                            ? const Color(0xFF1B5E20).withOpacity(0.12)
+                                                            : const Color(0xFF1B5E20).withOpacity(0.06))
+                                                        : (layer.isSelected
+                                                            ? const Color(0xFFB71C1C).withOpacity(0.12)
+                                                            : const Color(0xFFB71C1C).withOpacity(0.06)),
+                                                      borderRadius: BorderRadius.circular(math.min(8.0, layerHeight / 4)),
+                                                      border: Border.all(
+                                                        color: layer.layerType == LayerType.zoom
+                                                          ? const Color(0xFF2E7D32).withOpacity(layer.isSelected ? 0.5 : 0.25)
+                                                          : const Color(0xFFD32F2F).withOpacity(layer.isSelected ? 0.5 : 0.25),
+                                                        width: layer.isSelected ? 2.0 : 1.5,
+                                                      ),
+                                                      boxShadow: layer.isSelected ? [
+                                                        BoxShadow(
+                                                          color: layer.layerType == LayerType.zoom
+                                                            ? const Color(0xFF2E7D32).withOpacity(0.15)
+                                                            : const Color(0xFFD32F2F).withOpacity(0.15),
+                                                          blurRadius: 8,
+                                                          spreadRadius: 2,
+                                                        ),
+                                                      ] : null,
+                                                    ),
+                                                    child: (layer.endTime - layer.startTime) < 900 
+                                                      ? const SizedBox.shrink()  // Show nothing for short layers
+                                                      : Row(
+                                                      mainAxisSize: MainAxisSize.max,
+                                                      children: [
+                                                        LayoutBuilder(
+                                                          builder: (context, constraints) {
+                                                            final iconSize = math.min(20.0, layerHeight * 0.4);
+                                                            final fontSize = math.min(14.0, layerHeight * 0.3);
+                                                            
+                                                            // For medium layers (< 140px), show icon only
+                                                            if (constraints.maxWidth < 140) {
+                                                              return Padding(
+                                                                padding: const EdgeInsets.only(left: 8),
+                                                                child: Icon(
+                                                                  layer.layerType == LayerType.zoom 
+                                                                    ? Icons.zoom_in_rounded
+                                                                    : Icons.content_cut_rounded,
+                                                                  size: iconSize,
+                                                                  color: layer.layerType == LayerType.zoom
+                                                                    ? const Color(0xFF2E7D32)
+                                                                    : const Color(0xFFD32F2F),
+                                                                ),
+                                                              );
+                                                            }
+                                                            
+                                                            // Full content for wider layers
+                                                            return Padding(
+                                                              padding: const EdgeInsets.only(left: 32),
+                                                              child: Row(
+                                                                mainAxisSize: MainAxisSize.min,
+                                                                children: [
+                                                                  Icon(
+                                                                    layer.layerType == LayerType.zoom 
+                                                                      ? Icons.zoom_in_rounded
+                                                                      : Icons.content_cut_rounded,
+                                                                    size: iconSize,
+                                                                    color: layer.layerType == LayerType.zoom
+                                                                      ? const Color(0xFF2E7D32)
+                                                                      : const Color(0xFFD32F2F),
+                                                                  ),
+                                                                  const SizedBox(width: 8),
+                                                                  Text(
+                                                                    layer.layerType == LayerType.zoom ? 'Zoom' : 'Trim',
+                                                                    style: TextStyle(
+                                                                      color: layer.layerType == LayerType.zoom
+                                                                        ? const Color(0xFF2E7D32)
+                                                                        : const Color(0xFFD32F2F),
+                                                                      fontSize: fontSize,
+                                                                      fontWeight: FontWeight.w600,
+                                                                      letterSpacing: 0.4,
+                                                                    ),
+                                                                  ),
+                                                                ],
+                                                              ),
+                                                            );
+                                                          },
+                                                        ),
+                                                        const Spacer(),
+                                                        if (width > 180) ...[  // Only show duration for wider layers
+                                                          Text(
+                                                            '${((layer.endTime - layer.startTime) / 1000).toStringAsFixed(1)}s',
+                                                            style: TextStyle(
+                                                              color: layer.layerType == LayerType.zoom
+                                                                ? const Color(0xFF2E7D32).withOpacity(0.8)
+                                                                : const Color(0xFFD32F2F).withOpacity(0.8),
+                                                              fontSize: 13,
+                                                              fontWeight: FontWeight.w500,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 32),  // Right padding for resize handle
+                                                        ],
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  // Left resize handle
+                                                  Positioned(
+                                                    left: 0,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: MouseRegion(
+                                                      cursor: SystemMouseCursors.resizeLeft,
+                                                      child: GestureDetector(
+                                                        onHorizontalDragUpdate: (details) {
+                                                          final pixelDelta = details.delta.dx;
+                                                          final timeDelta = (pixelDelta / timelineWidth * widget.videoDuration.inMilliseconds).round() * 8;
+                                                          final newStartTime = layer.startTime + timeDelta;
+                                                          
+                                                          // Only prevent negative time and minimum duration
+                                                          if (newStartTime >= 0 && layer.endTime - newStartTime >= 100) {
+                                                            timelineNotifier.updateSegment(
+                                                              layer,
+                                                              layer.copyWith(startTime: newStartTime),
+                                                            );
+                                                          }
+                                                        },
+                                                        child: Container(
+                                                          width: width < 60 ? 8 : width < 80 ? 12 : 16,  // Even smaller handle for tiny layers
+                                                          color: Colors.transparent,
+                                                          child: Center(
+                                                            child: Container(
+                                                              width: width < 60 ? 1.5 : width < 80 ? 2 : 3,  // Thinner line for tiny layers
+                                                              height: width < 60 ? 20 : width < 80 ? 24 : 32,  // Shorter line for tiny layers
+                                                              decoration: BoxDecoration(
+                                                                color: layer.layerType == LayerType.zoom
+                                                                  ? const Color(0xFF2E7D32).withOpacity(0.8)
+                                                                  : const Color(0xFFD32F2F).withOpacity(0.8),
+                                                                borderRadius: BorderRadius.circular(1),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  // Right resize handle
+                                                  Positioned(
+                                                    right: 0,
+                                                    top: 0,
+                                                    bottom: 0,
+                                                    child: MouseRegion(
+                                                      cursor: SystemMouseCursors.resizeRight,
+                                                      child: GestureDetector(
+                                                        onHorizontalDragUpdate: (details) {
+                                                          final pixelDelta = details.delta.dx;
+                                                          final timeDelta = (pixelDelta / timelineWidth * widget.videoDuration.inMilliseconds).round() * 8;
+                                                          final newEndTime = layer.endTime + timeDelta;
+                                                          
+                                                          // Only prevent minimum duration
+                                                          if (newEndTime - layer.startTime >= 100) {
+                                                            timelineNotifier.updateSegment(
+                                                              layer,
+                                                              layer.copyWith(endTime: newEndTime),
+                                                            );
+                                                          }
+                                                        },
+                                                        child: Container(
+                                                          width: width < 60 ? 8 : width < 80 ? 12 : 16,  // Even smaller handle for tiny layers
+                                                          color: Colors.transparent,
+                                                          child: Center(
+                                                            child: Container(
+                                                              width: width < 60 ? 1.5 : width < 80 ? 2 : 3,  // Thinner line for tiny layers
+                                                              height: width < 60 ? 20 : width < 80 ? 24 : 32,  // Shorter line for tiny layers
+                                                              decoration: BoxDecoration(
+                                                                color: layer.layerType == LayerType.zoom
+                                                                  ? const Color(0xFF2E7D32).withOpacity(0.8)
+                                                                  : const Color(0xFFD32F2F).withOpacity(0.8),
+                                                                borderRadius: BorderRadius.circular(1),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
                                                     if (_timelineDragPosition != null)
                                                       TimelinePlayhead(
                                                         position: _timelineDragPosition!,
@@ -381,13 +713,6 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                           });
                                                         },
                                                         onDragEnd: (visualPosition) => _handlePlayheadDragEnd(visualPosition, constraints),
-                                                      ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ],
                                   ),
