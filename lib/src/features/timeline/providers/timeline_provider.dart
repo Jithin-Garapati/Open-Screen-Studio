@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import '../models/timeline_segment.dart';
+import '../models/zoom_settings.dart';
+import 'zoom_settings_provider.dart';
 import 'dart:math' as math;
+import 'dart:developer' as developer;
 
 class TimelineState {
   final List<TimelineSegment> segments;
@@ -44,7 +47,9 @@ class TimelineState {
 }
 
 class TimelineNotifier extends StateNotifier<TimelineState> {
-  TimelineNotifier() : super(const TimelineState());
+  final Ref ref;
+
+  TimelineNotifier(this.ref) : super(const TimelineState());
 
   void setPlaying(bool playing) {
     state = state.copyWith(isPlaying: playing);
@@ -85,11 +90,16 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
   }
 
   void selectSegment(TimelineSegment segment) {
+    final segmentId = segment.properties['id'] as String?;
+    if (segmentId == null) return;
+
+    developer.log('Selecting segment: $segmentId');
+    developer.log('Segment properties: ${segment.properties}');
+    developer.log('Segment type: ${segment.type}');
+    developer.log('Segment layer type: ${segment.layerType}');
+
     state = state.copyWith(
-      segments: state.segments.map((s) => s == segment 
-        ? s.copyWith(isSelected: true) 
-        : s.copyWith(isSelected: false)
-      ).toList(),
+      selectedSegments: {segmentId},
     );
   }
 
@@ -262,6 +272,9 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   void addLayerAtTime(int timestamp, LayerType type) {
     final segments = state.segments.toList();
+    final layerId = DateTime.now().millisecondsSinceEpoch.toString();
+    
+    developer.log('Adding layer: $type with ID: $layerId');
     
     // Create a new layer segment
     final newLayer = TimelineSegment(
@@ -272,14 +285,26 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
       color: type == LayerType.zoom ? Colors.blue : Colors.green,
       properties: {
         'isLayer': true,
-        'layerType': type,
-        'id': DateTime.now().millisecondsSinceEpoch.toString(),
+        'layerType': type.toString(),
+        'id': layerId,
       },
     );
     
     segments.add(newLayer);
-    state = state.copyWith(segments: segments);
+    state = state.copyWith(
+      segments: segments,
+      selectedSegments: {layerId},  // Select the new layer
+    );
     updateTrackOffsets();
+
+    // Initialize zoom settings if it's a zoom layer
+    if (type == LayerType.zoom) {
+      developer.log('Initializing zoom settings for layer: $layerId');
+      ref.read(zoomSettingsProvider.notifier).updateSettings(
+        layerId,
+        const ZoomSettings(),
+      );
+    }
   }
 
   void updateLayerProperties(TimelineSegment layerSegment, Map<String, dynamic> newProperties) {
@@ -390,5 +415,5 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 }
 
 final timelineProvider = StateNotifierProvider<TimelineNotifier, TimelineState>((ref) {
-  return TimelineNotifier();
+  return TimelineNotifier(ref);
 }); 

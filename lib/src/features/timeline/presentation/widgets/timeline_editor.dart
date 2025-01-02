@@ -221,7 +221,7 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
     final maxTrackOffset = timeline.segments
         .where((s) => s.isLayer)
         .map((s) => s.properties['trackOffset'] ?? 0)
-        .fold(0, (max, value) => math.max(max as int, value as int));
+        .fold(0, (max, value) => math.max(max, value as int));
     
     // Calculate height based on number of tracks
     // Base height (for main clip) + (number of layer tracks * track height) + padding
@@ -333,18 +333,18 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                 height: 48,
                                                 decoration: BoxDecoration(
                                                   color: const Color(0xFF1A1A1A),  // Darker background
-                                                  border: Border(
+                                                  border: const Border(
                                                     bottom: BorderSide(
-                                                      color: const Color(0xFF2A2A2A),  // Slightly lighter border
+                                                      color: Color(0xFF2A2A2A),  // Slightly lighter border
                                                       width: 1,
                                                     ),
                                                   ),
-                                                  gradient: LinearGradient(  // Subtle gradient
+                                                  gradient: const LinearGradient(  // Subtle gradient
                                                     begin: Alignment.topCenter,
                                                     end: Alignment.bottomCenter,
                                                     colors: [
-                                                      const Color(0xFF1A1A1A),
-                                                      const Color(0xFF1D1D1D),
+                                                      Color(0xFF1A1A1A),
+                                                      Color(0xFF1D1D1D),
                                                     ],
                                                   ),
                                                   boxShadow: [  // Inner shadow effect
@@ -420,13 +420,22 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                               ),
                                               // Main timeline grid
                                               Expanded(
-                                                child: CustomPaint(
-                                                  size: Size(timelineWidth, 160),
-                                                  painter: TimelineGridPainter(
-                                                    secondWidth: pixelsPerSecond,
-                                                    duration: widget.videoDuration,
-                                                    zoom: timeline.zoom,
-                                                    isScrolling: _isScrolling,
+                                                child: GestureDetector(
+                                                  behavior: HitTestBehavior.opaque,  // Ensure clicks are detected even on transparent areas
+                                                  onTapDown: (details) {
+                                                    timelineNotifier.clearSelection();
+                                                    final position = details.localPosition.dx;
+                                                    final time = (position / timelineWidth * widget.videoDuration.inMilliseconds).round();
+                                                    widget.onSeek(Duration(milliseconds: time));
+                                                  },
+                                                  child: CustomPaint(
+                                                    size: Size(timelineWidth, 160),
+                                                    painter: TimelineGridPainter(
+                                                      secondWidth: pixelsPerSecond,
+                                                      duration: widget.videoDuration,
+                                                      zoom: timeline.zoom,
+                                                      isScrolling: _isScrolling,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
@@ -452,7 +461,7 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                           onSeek: widget.onSeek,
                                                         ),
                                                       );
-                                      }).toList(),
+                                      }),
                                       // Layer tracks
                                       ...timeline.segments
                                           .where((segment) => segment.isLayer)
@@ -461,10 +470,10 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                         final width = ((layer.endTime - layer.startTime) / widget.videoDuration.inMilliseconds) * timelineWidth;
                                         
                                         final trackOffset = layer.properties['trackOffset'] as int? ?? 0;
-                                        final baseHeight = 48.0;  // Base layer height
+                                        const baseHeight = 48.0;  // Base layer height
                                         final layerHeight = baseHeight;
-                                        final spacing = 4.0;  // Space between layers
-                                        final topTimelineHeight = 48.0;  // Height of the top timeline area
+                                        const spacing = 4.0;  // Space between layers
+                                        const topTimelineHeight = 48.0;  // Height of the top timeline area
                                         final top = topTimelineHeight + 8.0 + (trackOffset * (layerHeight + spacing));  // Add topTimelineHeight to push layers down
                                         
                                         return Positioned(
@@ -507,104 +516,122 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                                     margin: const EdgeInsets.symmetric(vertical: 2),
                                                     width: double.infinity,
                                                     height: layerHeight - 4,  // Account for margin
-                                                    decoration: BoxDecoration(
-                                                      color: layer.layerType == LayerType.zoom 
-                                                        ? (layer.isSelected 
-                                                            ? const Color(0xFF1B5E20).withOpacity(0.12)
-                                                            : const Color(0xFF1B5E20).withOpacity(0.06))
-                                                        : (layer.isSelected
-                                                            ? const Color(0xFFB71C1C).withOpacity(0.12)
-                                                            : const Color(0xFFB71C1C).withOpacity(0.06)),
-                                                      borderRadius: BorderRadius.circular(math.min(8.0, layerHeight / 4)),
-                                                      border: Border.all(
-                                                        color: layer.layerType == LayerType.zoom
-                                                          ? const Color(0xFF2E7D32).withOpacity(layer.isSelected ? 0.5 : 0.25)
-                                                          : const Color(0xFFD32F2F).withOpacity(layer.isSelected ? 0.5 : 0.25),
-                                                        width: layer.isSelected ? 2.0 : 1.5,
-                                                      ),
-                                                      boxShadow: layer.isSelected ? [
-                                                        BoxShadow(
+                                                    child: AnimatedContainer(
+                                                      duration: const Duration(milliseconds: 200),
+                                                      curve: Curves.easeInOut,
+                                                      decoration: BoxDecoration(
+                                                        color: layer.layerType == LayerType.zoom 
+                                                          ? (timeline.selectedSegments.contains(layer.properties['id'])
+                                                              ? const Color(0xFF2E7D32).withOpacity(0.15)
+                                                              : const Color(0xFF1B5E20).withOpacity(0.08))
+                                                          : (timeline.selectedSegments.contains(layer.properties['id'])
+                                                              ? const Color(0xFFD32F2F).withOpacity(0.15)
+                                                              : const Color(0xFFB71C1C).withOpacity(0.08)),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                        border: Border.all(
                                                           color: layer.layerType == LayerType.zoom
-                                                            ? const Color(0xFF2E7D32).withOpacity(0.15)
-                                                            : const Color(0xFFD32F2F).withOpacity(0.15),
-                                                          blurRadius: 8,
-                                                          spreadRadius: 2,
+                                                              ? (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                  ? const Color(0xFF4CAF50).withOpacity(0.8)
+                                                                  : const Color(0xFF2E7D32).withOpacity(0.3))
+                                                              : (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                  ? const Color(0xFFEF5350).withOpacity(0.8)
+                                                                  : const Color(0xFFD32F2F).withOpacity(0.3)),
+                                                          width: timeline.selectedSegments.contains(layer.properties['id']) ? 1.5 : 1,
                                                         ),
-                                                      ] : null,
-                                                    ),
-                                                    child: (layer.endTime - layer.startTime) < 900 
-                                                      ? const SizedBox.shrink()  // Show nothing for short layers
-                                                      : Row(
-                                                      mainAxisSize: MainAxisSize.max,
-                                                      children: [
-                                                        LayoutBuilder(
-                                                          builder: (context, constraints) {
-                                                            final iconSize = math.min(20.0, layerHeight * 0.4);
-                                                            final fontSize = math.min(14.0, layerHeight * 0.3);
-                                                            
-                                                            // For medium layers (< 140px), show icon only
-                                                            if (constraints.maxWidth < 140) {
-                                                              return Padding(
-                                                                padding: const EdgeInsets.only(left: 8),
-                                                                child: Icon(
-                                                                  layer.layerType == LayerType.zoom 
-                                                                    ? Icons.zoom_in_rounded
-                                                                    : Icons.content_cut_rounded,
-                                                                  size: iconSize,
-                                                                  color: layer.layerType == LayerType.zoom
-                                                                    ? const Color(0xFF2E7D32)
-                                                                    : const Color(0xFFD32F2F),
-                                                                ),
-                                                              );
-                                                            }
-                                                            
-                                                            // Full content for wider layers
-                                                            return Padding(
-                                                              padding: const EdgeInsets.only(left: 32),
-                                                              child: Row(
-                                                                mainAxisSize: MainAxisSize.min,
-                                                                children: [
-                                                                  Icon(
-                                                                    layer.layerType == LayerType.zoom 
-                                                                      ? Icons.zoom_in_rounded
-                                                                      : Icons.content_cut_rounded,
-                                                                    size: iconSize,
-                                                                    color: layer.layerType == LayerType.zoom
-                                                                      ? const Color(0xFF2E7D32)
-                                                                      : const Color(0xFFD32F2F),
-                                                                  ),
-                                                                  const SizedBox(width: 8),
-                                                                  Text(
-                                                                    layer.layerType == LayerType.zoom ? 'Zoom' : 'Trim',
-                                                                    style: TextStyle(
-                                                                      color: layer.layerType == LayerType.zoom
-                                                                        ? const Color(0xFF2E7D32)
-                                                                        : const Color(0xFFD32F2F),
-                                                                      fontSize: fontSize,
-                                                                      fontWeight: FontWeight.w600,
-                                                                      letterSpacing: 0.4,
-                                                                    ),
-                                                                  ),
-                                                                ],
+                                                        boxShadow: timeline.selectedSegments.contains(layer.properties['id'])
+                                                          ? [
+                                                              BoxShadow(
+                                                                color: layer.layerType == LayerType.zoom
+                                                                  ? const Color(0xFF4CAF50).withOpacity(0.2)
+                                                                  : const Color(0xFFEF5350).withOpacity(0.2),
+                                                                blurRadius: 6,
+                                                                spreadRadius: 0,
                                                               ),
-                                                            );
-                                                          },
-                                                        ),
-                                                        const Spacer(),
-                                                        if (width > 180) ...[  // Only show duration for wider layers
-                                                          Text(
-                                                            '${((layer.endTime - layer.startTime) / 1000).toStringAsFixed(1)}s',
-                                                            style: TextStyle(
-                                                              color: layer.layerType == LayerType.zoom
-                                                                ? const Color(0xFF2E7D32).withOpacity(0.8)
-                                                                : const Color(0xFFD32F2F).withOpacity(0.8),
-                                                              fontSize: 13,
-                                                              fontWeight: FontWeight.w500,
-                                                            ),
+                                                            ]
+                                                          : null,
+                                                      ),
+                                                      child: (layer.endTime - layer.startTime) < 900 
+                                                        ? const SizedBox.shrink()  // Show nothing for short layers
+                                                        : Row(
+                                                            mainAxisSize: MainAxisSize.max,
+                                                            children: [
+                                                              LayoutBuilder(
+                                                                builder: (context, constraints) {
+                                                                  final iconSize = math.min(20.0, layerHeight * 0.4);
+                                                                  final fontSize = math.min(14.0, layerHeight * 0.3);
+                                                                  
+                                                                  // For medium layers (< 140px), show icon only
+                                                                  if (constraints.maxWidth < 140) {
+                                                                    return Padding(
+                                                                      padding: const EdgeInsets.only(left: 8),
+                                                                      child: Icon(
+                                                                        layer.layerType == LayerType.zoom 
+                                                                          ? Icons.zoom_in_rounded
+                                                                          : Icons.content_cut_rounded,
+                                                                        size: iconSize,
+                                                                        color: layer.layerType == LayerType.zoom
+                                                                          ? (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                              ? const Color(0xFF4CAF50).withOpacity(0.9)
+                                                                              : const Color(0xFF2E7D32).withOpacity(0.7))
+                                                                          : (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                              ? const Color(0xFFEF5350).withOpacity(0.9)
+                                                                              : const Color(0xFFD32F2F).withOpacity(0.7)),
+                                                                      ),
+                                                                    );
+                                                                  }
+                                                                  
+                                                                  // Full content for wider layers
+                                                                  return Padding(
+                                                                    padding: const EdgeInsets.only(left: 32),
+                                                                    child: Row(
+                                                                      mainAxisSize: MainAxisSize.min,
+                                                                      children: [
+                                                                        Icon(
+                                                                          layer.layerType == LayerType.zoom 
+                                                                            ? Icons.zoom_in_rounded
+                                                                            : Icons.content_cut_rounded,
+                                                                          size: iconSize,
+                                                                          color: layer.layerType == LayerType.zoom
+                                                                            ? (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                                ? const Color(0xFF4CAF50).withOpacity(0.9)
+                                                                                : const Color(0xFF2E7D32).withOpacity(0.7))
+                                                                            : (timeline.selectedSegments.contains(layer.properties['id'])
+                                                                                ? const Color(0xFFEF5350).withOpacity(0.9)
+                                                                                : const Color(0xFFD32F2F).withOpacity(0.7)),
+                                                                        ),
+                                                                        const SizedBox(width: 8),
+                                                                        Text(
+                                                                          layer.layerType == LayerType.zoom ? 'Zoom' : 'Trim',
+                                                                          style: TextStyle(
+                                                                            color: layer.layerType == LayerType.zoom
+                                                                              ? const Color(0xFF2E7D32)
+                                                                              : const Color(0xFFD32F2F),
+                                                                            fontSize: fontSize,
+                                                                            fontWeight: FontWeight.w600,
+                                                                            letterSpacing: 0.4,
+                                                                          ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                  );
+                                                                },
+                                                              ),
+                                                              const Spacer(),
+                                                              if (width > 180) ...[  // Only show duration for wider layers
+                                                                Text(
+                                                                  '${((layer.endTime - layer.startTime) / 1000).toStringAsFixed(1)}s',
+                                                                  style: TextStyle(
+                                                                    color: layer.layerType == LayerType.zoom
+                                                                      ? const Color(0xFF2E7D32).withOpacity(0.8)
+                                                                      : const Color(0xFFD32F2F).withOpacity(0.8),
+                                                                    fontSize: 13,
+                                                                    fontWeight: FontWeight.w500,
+                                                                  ),
+                                                                ),
+                                                                const SizedBox(width: 32),  // Right padding for resize handle
+                                                              ],
+                                                            ],
                                                           ),
-                                                          const SizedBox(width: 32),  // Right padding for resize handle
-                                                        ],
-                                                      ],
                                                     ),
                                                   ),
                                                   // Left resize handle
@@ -692,7 +719,7 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                             ),
                                           ),
                                         );
-                                      }).toList(),
+                                      }),
                                                     if (_timelineDragPosition != null)
                                                       TimelinePlayhead(
                                                         position: _timelineDragPosition!,

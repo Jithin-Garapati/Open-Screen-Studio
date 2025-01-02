@@ -5,6 +5,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:path/path.dart' as path;
 import 'dart:io';
+import 'dart:ui' as ui;
 import '../config/window_config.dart';
 import '../controllers/cursor_tracking_controller.dart';
 import '../models/cursor_position.dart';
@@ -14,7 +15,11 @@ import '../providers/cursor_settings_provider.dart';
 import '../providers/auto_zoom_provider.dart';
 import '../widgets/timeline_editor.dart';
 import '../services/ffmpeg_service.dart';
+import '../features/timeline/providers/timeline_provider.dart';
+import '../features/timeline/providers/zoom_settings_provider.dart';
+import '../features/timeline/models/timeline_segment.dart';
 import 'dart:async';
+import 'package:flutter/rendering.dart';
 
 enum VideoExportFormat {
   mp4_169, // 16:9
@@ -35,78 +40,120 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
   late final player = Player();
   late final controller = VideoController(player);
   CursorPosition? _currentCursor;
-  late final AnimationController _animationController;
   Offset _currentOffset = Offset.zero;
   bool _isFullScreen = false;
   double _playbackSpeed = 1.0;
   VideoExportFormat _selectedFormat = VideoExportFormat.mp4_169;
   bool _showEditor = true;
+  int _lastSeekTime = 0;
   
-  // Add transform values for zoom
+  // Zoom state
   double _currentScale = 1.0;
   Offset _currentTranslate = Offset.zero;
-  late Animation<double> _scaleAnimation;
-  late Animation<Offset> _translateAnimation;
 
   @override
   void initState() {
     super.initState();
     setWindowForPreview();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-
-    // Initialize animations with default values
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
-    _translateAnimation = Tween<Offset>(
-      begin: Offset.zero,
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
     player.open(Media(widget.videoPath));
     
-    // More frequent position updates
-    player.stream.position.listen((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.scheduleFrameCallback((_) {
-        _updateCursorPosition();
-      });
-    }, cancelOnError: false);
+    // Separate streams for cursor updates and trim handling
+    player.stream.position
+      .listen((position) {
+        if (!mounted) return;
+        _updateCursorPosition(position.inMilliseconds);
+      }, cancelOnError: false);
+
+    // Dedicated stream for trim handling with less frequent updates
+    player.stream.position
+      .listen((position) {
+        if (!mounted || !player.state.playing) return;
+        
+        final currentTimeMs = position.inMilliseconds;
+        final timeline = ref.read(timelineProvider);
+        
+        // Get all trim layers sorted by start time
+        final trimLayers = timeline.segments
+            .where((segment) => segment.isLayer && segment.layerType == LayerType.trim)
+            .toList()
+          ..sort((a, b) => a.startTime.compareTo(b.startTime));
+        
+        if (trimLayers.isEmpty) return;
+        
+        // Find if we're in a trim region using binary search
+        int left = 0;
+        int right = trimLayers.length - 1;
+        
+        while (left <= right) {
+          final mid = (left + right) ~/ 2;
+          final layer = trimLayers[mid];
+          
+          if (currentTimeMs >= layer.startTime && currentTimeMs < layer.endTime) {
+            // Found a trim region, calculate next valid position
+            int nextValidPosition = layer.endTime + 1;
+            
+            // Check for consecutive trim layers
+            for (int i = mid + 1; i < trimLayers.length; i++) {
+              if (trimLayers[i].startTime <= nextValidPosition) {
+                nextValidPosition = trimLayers[i].endTime + 1;
+              } else {
+                break;
+              }
+            }
+            
+            // Seek to next valid position
+            if (nextValidPosition > currentTimeMs) {
+              player.seek(Duration(milliseconds: nextValidPosition));
+            }
+            break;
+          }
+          
+          if (layer.startTime > currentTimeMs) {
+            right = mid - 1;
+          } else {
+            left = mid + 1;
+          }
+        }
+      }, cancelOnError: false);
   }
 
-  void _updateCursorPosition() {
+  void _updateCursorPosition(int currentTimeMs) {
     final cursorState = ref.read(cursorTrackingProvider);
-    final autoZoom = ref.read(autoZoomProvider);
-    
     if (cursorState.positions.isEmpty) return;
-
-    final currentTime = player.state.position.inMilliseconds;
     
-    // Find the closest cursor position
-    int index = 0;
-    int minDiff = (cursorState.positions[0].timestamp - currentTime).abs();
+    // Interpolate between cursor positions for smoother movement
+    int index = _binarySearchCursorPosition(cursorState.positions, currentTimeMs);
+    if (index < 0) return;
     
-    for (int i = 1; i < cursorState.positions.length; i++) {
-      final diff = (cursorState.positions[i].timestamp - currentTime).abs();
-      if (diff < minDiff) {
-        minDiff = diff;
-        index = i;
-      }
+    final currentPos = cursorState.positions[index];
+    CursorPosition? nextPos;
+    
+    if (index < cursorState.positions.length - 1) {
+      nextPos = cursorState.positions[index + 1];
     }
     
-    _currentCursor = cursorState.positions[index];
-
+    if (nextPos != null && currentPos.timestamp != nextPos.timestamp) {
+      // Interpolate between positions
+      final progress = (currentTimeMs - currentPos.timestamp) / 
+                      (nextPos.timestamp - currentPos.timestamp);
+      
+      if (progress >= 0 && progress <= 1) {
+        final interpolatedX = currentPos.x + (nextPos.x - currentPos.x) * progress;
+        final interpolatedY = currentPos.y + (nextPos.y - currentPos.y) * progress;
+        
+        _currentCursor = CursorPosition(
+          x: interpolatedX,
+          y: interpolatedY,
+          timestamp: currentTimeMs,
+          cursorType: currentPos.cursorType,
+        );
+      } else {
+        _currentCursor = currentPos;
+      }
+    } else {
+      _currentCursor = currentPos;
+    }
+    
     if (_currentCursor != null) {
       final isInBounds = _currentCursor!.x >= 0.0 && 
                         _currentCursor!.x <= 1.0 &&
@@ -120,56 +167,35 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
               : const Offset(-1, -1);
         });
       }
-
-      if (autoZoom.enabled && isInBounds) {
-        _updateZoom();
-      }
     }
   }
 
-  void _updateZoom() {
-    if (_currentCursor == null) return;
-    final autoZoom = ref.read(autoZoomProvider);
+  int _binarySearchCursorPosition(List<CursorPosition> positions, int timestamp) {
+    int left = 0;
+    int right = positions.length - 1;
     
-    // Calculate target scale and translation
-    final targetScale = autoZoom.enabled ? autoZoom.zoomLevel : 1.0;
+    while (left <= right) {
+      final mid = (left + right) ~/ 2;
+      final pos = positions[mid];
+      
+      if (pos.timestamp == timestamp) {
+        return mid;
+      }
+      
+      if (mid < positions.length - 1 && 
+          pos.timestamp <= timestamp && 
+          positions[mid + 1].timestamp > timestamp) {
+        return mid;
+      }
+      
+      if (pos.timestamp < timestamp) {
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
     
-    // Calculate target translation to center the cursor
-    final targetTranslate = autoZoom.enabled
-        ? Offset(
-            0.5 - _currentCursor!.x,
-            0.5 - _currentCursor!.y,
-          ) * targetScale
-        : Offset.zero;
-
-    // Create animations
-    _scaleAnimation = Tween<double>(
-      begin: _currentScale,
-      end: targetScale,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
-    _translateAnimation = Tween<Offset>(
-      begin: _currentTranslate,
-      end: targetTranslate,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOutCubic,
-    ));
-
-    // Reset and start animation
-    _animationController.duration = Duration(
-      milliseconds: autoZoom.transitionDuration.toInt(),
-    );
-    _animationController
-      ..reset()
-      ..forward();
-
-    // Update current values
-    _currentScale = targetScale;
-    _currentTranslate = targetTranslate;
+    return right.clamp(0, positions.length - 1);
   }
 
   void _toggleFullScreen() async {
@@ -316,9 +342,16 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
     }
   }
 
+  // Helper method to check if a time is within any trim layer
+  bool _isTimeInTrimRegion(int timeMs) {
+    final timeline = ref.read(timelineProvider);
+    return timeline.segments
+        .where((segment) => segment.isLayer && segment.layerType == LayerType.trim)
+        .any((layer) => timeMs >= layer.startTime && timeMs <= layer.endTime);
+  }
+
   @override
   void dispose() {
-    _animationController.dispose();
     player.dispose();
     super.dispose();
   }
@@ -331,12 +364,77 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
     final availableHeight = size.height - appBarHeight - timelineHeight;
     final cursorSettings = ref.watch(cursorSettingsProvider);
     final autoZoom = ref.watch(autoZoomProvider);
+    final timeline = ref.watch(timelineProvider);
     
+    // Calculate video dimensions to fit the screen while maintaining aspect ratio
     const videoAspectRatio = 16 / 9;
-    final videoHeight = availableHeight;
-    final videoWidth = videoHeight * videoAspectRatio;
-    final videoX = (size.width - (_showEditor ? 300 : 0) - videoWidth) / 2;
+    final containerWidth = size.width - (_showEditor ? 300 : 0);
+    final containerHeight = availableHeight;
+    
+    // Calculate dimensions to fit while maintaining aspect ratio
+    double videoWidth;
+    double videoHeight;
+    if (containerWidth / containerHeight > videoAspectRatio) {
+      // Width is the limiting factor
+      videoHeight = containerHeight;
+      videoWidth = videoHeight * videoAspectRatio;
+    } else {
+      // Height is the limiting factor
+      videoWidth = containerWidth;
+      videoHeight = videoWidth / videoAspectRatio;
+    }
+    
+    final videoX = (containerWidth - videoWidth) / 2;
     final videoY = appBarHeight;
+
+    // Find active zoom layer at current position
+    final currentTimeMs = player.state.position.inMilliseconds;
+    final activeZoomLayer = timeline.segments
+        .where((segment) => 
+          segment.isLayer && 
+          segment.layerType == LayerType.zoom &&
+          currentTimeMs >= segment.startTime &&
+          currentTimeMs <= segment.endTime)
+        .firstOrNull;
+
+    // Get zoom settings if there's an active layer
+    final zoomSettings = activeZoomLayer != null
+        ? ref.watch(zoomSettingsProvider)[activeZoomLayer.properties['id']]
+        : null;
+
+    // Calculate zoom transition progress based on layer position
+    double zoomProgress = 0.0;
+    if (zoomSettings != null && activeZoomLayer != null) {
+      final layerDuration = activeZoomLayer.endTime - activeZoomLayer.startTime;
+      final transitionDuration = (layerDuration * 0.15).clamp(500.0, 1000.0); // 15% of layer duration
+      
+      if (currentTimeMs - activeZoomLayer.startTime < transitionDuration) {
+        // Zoom in at start of layer
+        zoomProgress = (currentTimeMs - activeZoomLayer.startTime) / transitionDuration;
+        zoomProgress = Curves.easeOutCubic.transform(zoomProgress);
+      } else if (activeZoomLayer.endTime - currentTimeMs < transitionDuration) {
+        // Zoom out at end of layer
+        zoomProgress = (activeZoomLayer.endTime - currentTimeMs) / transitionDuration;
+        zoomProgress = Curves.easeInCubic.transform(zoomProgress);
+      } else {
+        // Stay at full zoom during layer
+        zoomProgress = 1.0;
+      }
+
+      // Calculate zoom transform
+      final targetScale = zoomSettings.scale;
+      _currentScale = 1.0 + ((targetScale - 1.0) * zoomProgress);
+      
+      final targetOffset = Offset(
+        (0.5 - zoomSettings.target.dx) * videoWidth,
+        (0.5 - zoomSettings.target.dy) * videoHeight,
+      ) * (_currentScale - 1);
+      _currentTranslate = targetOffset * zoomProgress;
+    } else {
+      // Reset zoom when no layer is active
+      _currentScale = 1.0;
+      _currentTranslate = Offset.zero;
+    }
 
     return Scaffold(
       appBar: _isFullScreen ? null : AppBar(
@@ -403,64 +501,62 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
                   child: Stack(
                     children: [
                       // Video Player with zoom transform
-                      AnimatedBuilder(
-                        animation: _animationController,
-                        builder: (context, child) => Positioned(
-                          left: videoX,
-                          top: videoY,
-                          width: videoWidth,
-                          height: videoHeight,
+                      Positioned(
+                        left: videoX,
+                        top: videoY,
+                        width: videoWidth,
+                        height: videoHeight,
+                        child: ClipRect(
                           child: Transform(
                             transform: Matrix4.identity()
                               ..translate(
-                                _translateAnimation.value.dx * videoWidth,
-                                _translateAnimation.value.dy * videoHeight,
+                                -_currentTranslate.dx,
+                                -_currentTranslate.dy,
                               )
-                              ..scale(_scaleAnimation.value),
+                              ..scale(_currentScale),
                             alignment: Alignment.center,
-                            child: Video(controller: controller),
+                            filterQuality: FilterQuality.high,
+                            child: Video(
+                              controller: controller,
+                              filterQuality: FilterQuality.high,
+                            ),
                           ),
                         ),
                       ),
                       
-                      // Cursor Overlay - only show if cursor is in bounds
+                      // Cursor Overlay with improved positioning
                       if (_currentCursor != null && 
                           cursorSettings.isVisible && 
                           _currentOffset.dx >= 0 && 
                           _currentOffset.dy >= 0)
-                        TweenAnimationBuilder<Offset>(
-                          tween: Tween(begin: _currentOffset, end: _currentOffset),
-                          duration: const Duration(milliseconds: 4),
-                          curve: Curves.linear,
-                          builder: (context, offset, child) => Positioned(
-                            left: videoX + (offset.dx * videoWidth),
-                            top: videoY + (offset.dy * videoHeight),
-                            child: Transform.scale(
-                              scale: cursorSettings.size,
-                              child: Opacity(
-                                opacity: cursorSettings.opacity,
-                                child: ColorFiltered(
-                                  colorFilter: cursorSettings.tintColor != null
-                                      ? ColorFilter.mode(
-                                          cursorSettings.tintColor!,
-                                          BlendMode.srcATop,
-                                        )
-                                      : const ColorFilter.mode(
-                                          Colors.transparent,
-                                          BlendMode.dst,
-                                        ),
-                                  child: Image.asset(
-                                    CursorTracker.getCursorImage(_currentCursor!.cursorType),
-                                    width: 32,
-                                    height: 32,
-                                    filterQuality: FilterQuality.none,
-                                  ),
+                        Positioned(
+                          left: videoX + (_currentOffset.dx * videoWidth * _currentScale - _currentTranslate.dx),
+                          top: videoY + (_currentOffset.dy * videoHeight * _currentScale - _currentTranslate.dy),
+                          child: Transform.scale(
+                            scale: cursorSettings.size,
+                            child: Opacity(
+                              opacity: cursorSettings.opacity,
+                              child: ColorFiltered(
+                                colorFilter: cursorSettings.tintColor != null
+                                    ? ColorFilter.mode(
+                                        cursorSettings.tintColor!,
+                                        BlendMode.srcATop,
+                                      )
+                                    : const ColorFilter.mode(
+                                        Colors.transparent,
+                                        BlendMode.dst,
+                                      ),
+                                child: Image.asset(
+                                  CursorTracker.getCursorImage(_currentCursor!.cursorType),
+                                  width: 32,
+                                  height: 32,
+                                  filterQuality: FilterQuality.high,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      
+
                       // Video Controls Overlay
                       if (!_isFullScreen)
                         Positioned(
@@ -490,7 +586,40 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
                                           player.state.playing ? Icons.pause : Icons.play_arrow,
                                           color: Colors.white,
                                         ),
-                                        onPressed: () => player.playOrPause(),
+                                        onPressed: () {
+                                          if (!player.state.playing) {
+                                            // Check if we're starting playback in a trim region
+                                            final timeline = ref.read(timelineProvider);
+                                            final currentTimeMs = player.state.position.inMilliseconds;
+                                            
+                                            final trimLayers = timeline.segments
+                                                .where((segment) => segment.isLayer && segment.layerType == LayerType.trim)
+                                                .toList()
+                                              ..sort((a, b) => a.startTime.compareTo(b.startTime));
+                                            
+                                            // Find if we're in a trim region
+                                            for (final trimLayer in trimLayers) {
+                                              if (currentTimeMs >= trimLayer.startTime && currentTimeMs < trimLayer.endTime) {
+                                                // Calculate next valid position after all consecutive trim regions
+                                                int nextValidPosition = trimLayer.endTime + 1;
+                                                
+                                                for (int i = trimLayers.indexOf(trimLayer) + 1; i < trimLayers.length; i++) {
+                                                  if (trimLayers[i].startTime <= nextValidPosition) {
+                                                    nextValidPosition = trimLayers[i].endTime + 1;
+                                                  } else {
+                                                    break;
+                                                  }
+                                                }
+                                                
+                                                // Seek to end of trim region before starting playback
+                                                _lastSeekTime = nextValidPosition;
+                                                player.seek(Duration(milliseconds: nextValidPosition));
+                                                break;
+                                              }
+                                            }
+                                          }
+                                          player.playOrPause();
+                                        },
                                       ),
                                       StreamBuilder(
                                         stream: player.stream.volume,
@@ -536,7 +665,6 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
                                         tooltip: 'Auto Zoom',
                                         onPressed: () {
                                           ref.read(autoZoomProvider.notifier).toggleEnabled();
-                                          _updateZoom();
                                         },
                                       ),
                                       const SizedBox(width: 8),
@@ -584,7 +712,11 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
 
                 // Editor Panel
                 if (_showEditor && !_isFullScreen)
-                  const VideoEditorPanel(),
+                  VideoEditorPanel(
+                    videoController: controller,
+                    currentPosition: player.state.position,
+                    videoSize: Size(videoWidth, videoHeight),
+                  ),
               ],
             ),
           ),
