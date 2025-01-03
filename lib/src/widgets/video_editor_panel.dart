@@ -36,12 +36,12 @@ class VideoEditorPanel extends ConsumerWidget {
               developer.log('Checking segment: ${s.properties}');
               return selectedSegments.contains(s.properties['id']);
             },
-            orElse: () => TimelineSegment(
+            orElse: () => const TimelineSegment(
               startTime: 0,
               endTime: 0,
               type: SegmentType.layer,
               color: Colors.transparent,
-              properties: const {},
+              properties: {},
             ),
           )
         : null;

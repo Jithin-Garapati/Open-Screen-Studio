@@ -9,6 +9,7 @@ class ZoomSettings {
   final Duration transitionOutDuration; // Duration for zoom out transition
   final Curve transitionInCurve;        // Curve for zoom in transition
   final Curve transitionOutCurve;       // Curve for zoom out transition
+  final bool isAutoZoom;  // Whether this zoom follows click positions
 
   const ZoomSettings({
     this.scale = 1.5,
@@ -19,6 +20,7 @@ class ZoomSettings {
     this.transitionOutDuration = const Duration(milliseconds: 300),
     this.transitionInCurve = Curves.easeOutCubic,
     this.transitionOutCurve = Curves.easeInCubic,
+    this.isAutoZoom = false,
   });
 
   ZoomSettings copyWith({
@@ -30,6 +32,7 @@ class ZoomSettings {
     Duration? transitionOutDuration,
     Curve? transitionInCurve,
     Curve? transitionOutCurve,
+    bool? isAutoZoom,
   }) {
     return ZoomSettings(
       scale: scale ?? this.scale,
@@ -40,6 +43,7 @@ class ZoomSettings {
       transitionOutDuration: transitionOutDuration ?? this.transitionOutDuration,
       transitionInCurve: transitionInCurve ?? this.transitionInCurve,
       transitionOutCurve: transitionOutCurve ?? this.transitionOutCurve,
+      isAutoZoom: isAutoZoom ?? this.isAutoZoom,
     );
   }
 
@@ -51,6 +55,7 @@ class ZoomSettings {
       'durationMs': duration.inMilliseconds,
       'transitionInDurationMs': transitionInDuration.inMilliseconds,
       'transitionOutDurationMs': transitionOutDuration.inMilliseconds,
+      'isAutoZoom': isAutoZoom,
     };
   }
 
@@ -64,6 +69,7 @@ class ZoomSettings {
       duration: Duration(milliseconds: json['durationMs'] as int? ?? 500),
       transitionInDuration: Duration(milliseconds: json['transitionInDurationMs'] as int? ?? 300),
       transitionOutDuration: Duration(milliseconds: json['transitionOutDurationMs'] as int? ?? 300),
+      isAutoZoom: json['isAutoZoom'] as bool? ?? false,
     );
   }
 } 

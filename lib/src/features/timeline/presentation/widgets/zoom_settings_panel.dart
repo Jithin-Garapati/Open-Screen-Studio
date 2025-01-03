@@ -70,8 +70,62 @@ class ZoomSettingsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // Auto Zoom Toggle
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.1),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.mouse,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Auto Zoom',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const Spacer(),
+                    Switch(
+                      value: settings.isAutoZoom,
+                      onChanged: (value) {
+                        onSettingsChanged(settings.copyWith(isAutoZoom: value));
+                      },
+                      activeColor: Colors.blue,
+                    ),
+                  ],
+                ),
+                if (settings.isAutoZoom)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Automatically zooms to click positions during playback',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // Frame Preview with Target Selector
-          if (videoController != null)
+          if (videoController != null && !settings.isAutoZoom)
             Container(
               height: 160,
               width: double.infinity,
@@ -107,7 +161,7 @@ class ZoomSettingsPanel extends StatelessWidget {
                 ),
               ),
             ),
-          const SizedBox(height: 16),
+          if (!settings.isAutoZoom) const SizedBox(height: 16),
 
           // Zoom Scale
           Row(

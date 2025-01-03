@@ -44,7 +44,7 @@ class PreviewService {
     
     try {
       // Only treat it as a window if it's explicitly marked as one
-      final isWindow = false;  // For now, treat all as displays until window capture is implemented
+      const isWindow = false;  // For now, treat all as displays until window capture is implemented
       debugPrint('Display type: ${isWindow ? "Window" : "Screen"}, ID: ${display.id}');
 
       _hdcScreen = GetDC(NULL);  // Always get the entire screen DC

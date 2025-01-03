@@ -40,12 +40,12 @@ class CursorOverlayService {
     }
     _lastUpdate = now;
 
-    using((Arena arena) {
-      final point = arena<POINT>();
-      if (GetCursorPos(point) != 0) {
+    final lpPoint = calloc<POINT>();
+    try {
+      if (GetCursorPos(lpPoint) != 0) {
         final cursorPos = Offset(
-          point.ref.x.toDouble(),
-          point.ref.y.toDouble(),
+          lpPoint.ref.x.toDouble(),
+          lpPoint.ref.y.toDouble(),
         );
         
         // Only update if position has changed
@@ -56,7 +56,9 @@ class CursorOverlayService {
           });
         }
       }
-    });
+    } finally {
+      calloc.free(lpPoint);
+    }
   }
 
   void dispose() {

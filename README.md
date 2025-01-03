@@ -4,51 +4,76 @@ An opinionated screen recording and editing app for Windows built with Flutter D
 
 ## Features
 
-- **Screen Recording**: Record any display or window with system audio support
-- **Smart Cursor**: Custom cursor overlay with smooth animations and automatic zooming
-- **Audio Control**: Record system audio and microphone with device selection
-- **Modern UI**: Clean, intuitive interface built with Flutter
+- Screen recording with automatic cursor tracking
+- Advanced cursor effects (smoothing, size adjustment, hiding)
+- Automatic zooming on cursor actions
+- Manual zoom layers with customizable settings
+- Background customization with colors and rounded corners
+- Timeline-based editing with multiple layer types
+- Export to various formats (16:9, 9:16, 1:1, GIF)
 
-## Development Status
+## Requirements
 
-Currently implementing:
-- ✅ Display selection
-- ✅ Audio device selection
-- ✅ Custom cursor overlay
-- 🚧 Recording controls
-- 🚧 Video editing
-- 🚧 Export options
-
-## Getting Started
-
-### Prerequisites
-
-- Flutter (latest stable version)
 - Windows 10 or later
+- Flutter SDK (>=3.0.0)
 - Visual Studio Build Tools
+- Git
 
-### Setup
+## Development Setup
 
-1. Clone the repository
+1. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/open_screen_studio.git
 cd open_screen_studio
 ```
 
-2. Install dependencies
+2. Install dependencies:
 ```bash
 flutter pub get
 ```
 
-3. Run the app
+3. Run the app:
 ```bash
 flutter run -d windows
 ```
 
+## Building
+
+To create a release build:
+
+```bash
+flutter build windows
+```
+
+The built application will be available in `build/windows/runner/Release/`.
+
+## Project Structure
+
+```
+lib/
+├── src/
+│   ├── features/          # Feature modules
+│   │   ├── background/    # Background customization
+│   │   ├── recording/     # Screen recording
+│   │   ├── timeline/      # Timeline editing
+│   │   └── zoom/          # Zoom functionality
+│   ├── screens/          # App screens
+│   ├── widgets/          # Reusable widgets
+│   ├── models/           # Data models
+│   ├── providers/        # State management
+│   ├── services/         # Platform services
+│   └── utils/           # Helper functions
+└── main.dart            # App entry point
+```
+
 ## Contributing
 
-This project is currently in early development. Feel free to open issues for bugs or feature requests.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -471,7 +471,7 @@ class _TimelineEditorState extends ConsumerState<TimelineEditor> with TickerProv
                                         
                                         final trackOffset = layer.properties['trackOffset'] as int? ?? 0;
                                         const baseHeight = 48.0;  // Base layer height
-                                        final layerHeight = baseHeight;
+                                        const layerHeight = baseHeight;
                                         const spacing = 4.0;  // Space between layers
                                         const topTimelineHeight = 48.0;  // Height of the top timeline area
                                         final top = topTimelineHeight + 8.0 + (trackOffset * (layerHeight + spacing));  // Add topTimelineHeight to push layers down

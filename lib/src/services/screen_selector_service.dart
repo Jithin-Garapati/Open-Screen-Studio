@@ -288,7 +288,7 @@ class ScreenSelectorService {
       }
 
       // Then enumerate other windows
-      final enumWindowsProc = Pointer.fromFunction<EnumWindowsProc>(_enumWindowsCallback, 1);
+      final enumWindowsProc = Pointer.fromFunction<WNDENUMPROC>(_enumWindowsCallback, 1);
       EnumWindows(enumWindowsProc, 0);
 
       print('Found ${_windows.length} total windows');

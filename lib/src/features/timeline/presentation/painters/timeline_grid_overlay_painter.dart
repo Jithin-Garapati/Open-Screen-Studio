@@ -28,7 +28,7 @@ class TimelineGridOverlayPainter extends CustomPainter {
     }
 
     // Draw horizontal grid lines
-    final spacing = 4.0;  // 4px spacing between lines
+    const spacing = 4.0;  // 4px spacing between lines
     for (var y = 0.0; y < size.height; y += spacing) {
       canvas.drawLine(
         Offset(0, y),

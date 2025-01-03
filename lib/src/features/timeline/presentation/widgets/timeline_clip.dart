@@ -68,7 +68,7 @@ class TimelineClip extends ConsumerWidget {
         child: Column(
           children: [
             // Main clip content
-            Container(
+            SizedBox(
               height: 80,
               child: Stack(
                 children: [

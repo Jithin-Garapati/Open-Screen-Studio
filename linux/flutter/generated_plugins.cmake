@@ -3,13 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  bitsdojo_window_linux
-  desktop_drop
-  flutter_acrylic
   media_kit_video
   screen_capturer
   screen_retriever
-  system_tray
   window_manager
 )
 
