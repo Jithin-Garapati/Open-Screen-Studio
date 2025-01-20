@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:ui' as ui;
-import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 import '../models/display_info.dart';
 import '../services/screen_selector_service.dart';
 import '../services/screen_recorder_service.dart';
 import '../services/cursor_overlay_service.dart';
+import '../services/recording_navigation_service.dart';
 import 'cursor_tracking_controller.dart';
 import '../features/recording/domain/entities/screen_info.dart';
+import 'dart:async';
+import 'dart:ffi';
+import 'dart:convert';
+import 'dart:io';
+import 'package:path/path.dart' as path;
+import '../services/cursor_tracker.dart';
+import '../providers/cursor_settings_provider.dart';
 
 enum RecordingStatus {
   idle,
@@ -69,18 +76,17 @@ final cursorPositionProvider = StateProvider<Offset?>((ref) => null);
 
 class RecordingController extends StateNotifier<RecordingState> {
   final ScreenRecorderService _screenRecorderService;
-  final CursorOverlayService _cursorOverlayService = CursorOverlayService();
+  final CursorOverlayService _cursorOverlayService;
   final List<void Function(ui.Image?)> _previewListeners = [];
   bool _isInitialized = false;
   BuildContext? _context;
   final Ref ref;
   Future<void>? _initializationFuture;
 
-  RecordingController(this.ref) : 
-    _screenRecorderService = ref.read(screenRecorderServiceProvider),
-    super(const RecordingState()) {
-    _initializationFuture = _initialize();
-  }
+  RecordingController(this.ref)
+      : _screenRecorderService = ref.read(screenRecorderServiceProvider),
+        _cursorOverlayService = CursorOverlayService(),
+        super(const RecordingState());
 
   void updateContext(BuildContext context) {
     _context = context;
@@ -131,8 +137,6 @@ class RecordingController extends StateNotifier<RecordingState> {
   }
 
   void setScreen(ScreenInfo screen) {
-    debugPrint('Setting screen: ${screen.windowTitle} (${screen.width}x${screen.height})');
-    
     // Get window coordinates for windows
     if (screen.type == ScreenType.window) {
       final hwnd = screen.handle;
@@ -141,7 +145,6 @@ class RecordingController extends StateNotifier<RecordingState> {
         if (GetWindowRect(hwnd, rect) != 0) {
           final width = rect.ref.right - rect.ref.left;
           final height = rect.ref.bottom - rect.ref.top;
-          debugPrint('Window coordinates: (${rect.ref.left},${rect.ref.top}) size: ${width}x$height');
           
           // Convert ScreenInfo to DisplayInfo with proper coordinates
           final display = DisplayInfo(
@@ -188,34 +191,27 @@ class RecordingController extends StateNotifier<RecordingState> {
 
   void _startPreview() {
     if (!_isInitialized) {
-      debugPrint('Not initialized, initializing first...');
       _initialize().then((_) {
-        debugPrint('Initialization complete, starting preview...');
         _startPreview();
       });
       return;
     }
 
+    if (state.selectedDisplay == null) {
+      // If no display is selected, try to select the primary display
+      ScreenSelectorService.getDisplays().then((displays) {
+        if (displays.isNotEmpty) {
+          selectDisplay(displays.first);
+        }
+      });
+      return;
+    }
+
     if (state.selectedDisplay != null) {
-      final screen = state.selectedScreen;
-      final display = state.selectedDisplay!;
-      
-      debugPrint('Starting preview for display: ${display.name}');
-      
-      // Stop any existing preview first
-      _screenRecorderService.stopPreview();
-      
-      // Start new preview
       _screenRecorderService.startPreview(
-        display,
-        onFrame: (frame) {
-          debugPrint('Received preview frame');
-          _notifyPreviewListeners(frame);
-        },
-        isWindow: screen?.type == ScreenType.window,
+        state.selectedDisplay!,
+        onFrame: _notifyPreviewListeners,
       );
-    } else {
-      debugPrint('No display selected for preview');
     }
   }
 
@@ -309,12 +305,45 @@ class RecordingController extends StateNotifier<RecordingState> {
 
   Future<String?> stopRecording() async {
     try {
+      state = state.copyWith(status: RecordingStatus.saving);
+      
+      // Stop recording first
       final outputPath = await _screenRecorderService.stopRecording();
-      if (_context != null) {
-        ref.read(cursorTrackingProvider.notifier).stopTracking(outputPath, _context!);
+      final cursorState = ref.read(cursorTrackingProvider);
+      
+      // Export cursor data if we have positions
+      if (cursorState.positions.isNotEmpty) {
+        final originalFileName = path.basenameWithoutExtension(outputPath);
+        final cursorDataPath = path.join(
+          path.dirname(outputPath),
+          '${originalFileName}_cursor_data.json'
+        );
+        
+        // Convert cursor positions to JSON
+        final cursorData = {
+          'positions': cursorState.positions.map((pos) => {
+            'x': pos.x,
+            'y': pos.y,
+            'timestamp': pos.timestamp,
+            'cursorType': pos.cursorType,
+          }).toList(),
+        };
+        
+        // Write cursor data to file
+        await File(cursorDataPath).writeAsString(jsonEncode(cursorData));
       }
+      
+      // Stop cursor overlay and tracking
+      ref.read(cursorTrackingProvider.notifier).stopTracking();
       _cursorOverlayService.stopRecording();
+      
       state = state.copyWith(status: RecordingStatus.saved);
+      
+      // Navigate only after everything is cleaned up
+      if (_context != null && _context!.mounted) {
+        RecordingNavigationService.stopRecording(ref, _context!, outputPath);
+      }
+      
       return outputPath;
     } catch (e) {
       state = state.copyWith(
@@ -341,6 +370,17 @@ class RecordingController extends StateNotifier<RecordingState> {
     state = state.copyWith(
       isSystemAudioEnabled: !state.isSystemAudioEnabled,
     );
+  }
+
+  void updateCursor(Offset position, int cursorHandle) {
+    if (state.status != RecordingStatus.recording) return;
+    
+    // Map Windows cursor handle to our fixed cursor type
+    final cursorType = CursorTracker.mapCursorType(cursorHandle);
+    
+    // Update cursor position and type
+    ref.read(cursorPositionProvider.notifier).state = position;
+    ref.read(cursorTypeProvider.notifier).state = cursorType;
   }
 
   @override

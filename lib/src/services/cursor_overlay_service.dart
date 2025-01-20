@@ -49,15 +49,33 @@ class CursorOverlayService {
         );
         
         // Only update if position has changed
-        if (cursorPos != _lastPosition) {
+        if (_lastPosition == null || _lastPosition != cursorPos) {
           _lastPosition = cursorPos;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _container.read(cursorPositionProvider.notifier).state = cursorPos;
-          });
+          
+          // Get cursor type
+          final cursorInfo = calloc<CURSORINFO>();
+          cursorInfo.ref.cbSize = sizeOf<CURSORINFO>();
+          
+          try {
+            if (GetCursorInfo(cursorInfo) != 0) {
+              debugPrint('Cursor flags: ${cursorInfo.ref.flags}');
+              final cursorHandle = (cursorInfo.ref.flags & 0x00000001 != 0)
+                  ? cursorInfo.ref.hCursor
+                  : LoadCursor(NULL, IDC_ARROW);
+              debugPrint('Got cursor handle: $cursorHandle');
+                  
+              _container.read(recordingControllerProvider.notifier).updateCursor(
+                cursorPos,
+                cursorHandle,
+              );
+            }
+          } finally {
+            free(cursorInfo);
+          }
         }
       }
     } finally {
-      calloc.free(lpPoint);
+      free(lpPoint);
     }
   }
 

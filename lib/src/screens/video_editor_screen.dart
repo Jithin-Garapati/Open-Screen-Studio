@@ -5,28 +5,24 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:path/path.dart' as path;
 import 'dart:io';
-import 'dart:ui' as ui;
 import '../config/window_config.dart';
 import '../controllers/cursor_tracking_controller.dart';
 import '../models/cursor_position.dart';
 import '../services/cursor_tracker.dart';
-import '../widgets/video_editor_panel.dart';
 import '../providers/cursor_settings_provider.dart';
 import '../providers/auto_zoom_provider.dart';
 import '../widgets/timeline_editor.dart';
-import '../services/ffmpeg_service.dart';
 import '../features/timeline/providers/timeline_provider.dart';
-import '../features/timeline/providers/zoom_settings_provider.dart';
 import '../features/timeline/providers/click_positions_provider.dart';
 import '../features/timeline/models/timeline_segment.dart';
 import '../models/cursor_type.dart';
 import 'dart:async';
 import '../features/background/presentation/widgets/video_background_container.dart';
 import '../features/background/presentation/widgets/background_settings_panel.dart';
-import '../features/zoom/presentation/widgets/zoom_container.dart';
-import '../features/zoom/providers/zoom_settings_provider.dart' as editor_zoom;
-import '../features/zoom/presentation/widgets/zoom_settings_panel.dart';
 import '../features/timeline/providers/timeline_zoom_settings_provider.dart';
+import '../features/background/providers/background_settings_provider.dart';
+import 'dart:convert';
+import '../services/video_export_service.dart';
 
 enum VideoExportFormat {
   mp4_169, // 16:9
@@ -43,6 +39,105 @@ class VideoEditorScreen extends ConsumerStatefulWidget {
   ConsumerState<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
+class ExportControls extends StatelessWidget {
+  final bool isExporting;
+  final double playbackSpeed;
+  final VoidCallback onExport;
+  final ValueChanged<double> onSpeedChanged;
+
+  const ExportControls({
+    super.key,
+    required this.isExporting,
+    required this.playbackSpeed,
+    required this.onExport,
+    required this.onSpeedChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(right: 16.0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButton<double>(
+            value: playbackSpeed,
+            dropdownColor: const Color(0xFF151515),
+            style: const TextStyle(color: Colors.white),
+            items: [0.5, 1.0, 1.5, 2.0].map((speed) {
+              return DropdownMenuItem(
+                value: speed,
+                child: Text('${speed}x'),
+              );
+            }).toList(),
+            onChanged: (speed) {
+              if (speed != null) onSpeedChanged(speed);
+            },
+          ),
+          const SizedBox(width: 16),
+          MouseRegion(
+            child: Container(
+              decoration: BoxDecoration(
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00E5FF).withOpacity(0.2),
+                    blurRadius: 12,
+                    spreadRadius: -2,
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFF00E5FF).withOpacity(0.1),
+                    blurRadius: 20,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: ElevatedButton.icon(
+                onPressed: isExporting ? null : onExport,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF151515),
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0xFF00E5FF), width: 1),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ).copyWith(
+                  overlayColor: MaterialStateProperty.resolveWith<Color?>(
+                    (Set<MaterialState> states) {
+                      if (states.contains(MaterialState.hovered)) {
+                        return const Color(0xFF00E5FF).withOpacity(0.15);
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                icon: isExporting ? null : const Icon(Icons.save),
+                label: isExporting 
+                  ? const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Text('Exporting...'),
+                      ],
+                    )
+                  : const Text('Export Video'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with TickerProviderStateMixin {
   late final player = Player();
   late final controller = VideoController(player);
@@ -50,13 +145,14 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
   Offset _currentOffset = Offset.zero;
   bool _isFullScreen = false;
   double _playbackSpeed = 1.0;
-  VideoExportFormat _selectedFormat = VideoExportFormat.mp4_169;
+  final VideoExportFormat _selectedFormat = VideoExportFormat.mp4_169;
   bool _showEditor = true;
-  int _lastSeekTime = 0;
+  final int _lastSeekTime = 0;
   
   // Zoom state
   double _currentScale = 1.0;
   Offset _currentTranslate = Offset.zero;
+  bool _isExporting = false;
 
   @override
   void initState() {
@@ -159,7 +255,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
         ref.read(cursorEventsProvider.notifier).addEvent(
           Offset(interpolatedX, interpolatedY),
           currentTimeMs,
-          isClick: currentPos.cursorType == CursorType.pointer,
+          isClick: currentPos.cursorType == CursorType.hand,
         );
       } else {
         _currentCursor = currentPos;
@@ -234,126 +330,130 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
     return '$minutes:$seconds';
   }
 
-  Future<void> _exportVideo(VideoExportFormat format) async {
-    final cursorState = ref.read(cursorTrackingProvider);
-    final cursorSettings = ref.read(cursorSettingsProvider);
-    final autoZoom = ref.read(autoZoomProvider);
+  Future<void> _exportVideo() async {
+    setState(() => _isExporting = true);
     
-    // Get output path
-    final inputPath = widget.videoPath;
-    final outputDir = path.dirname(inputPath);
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final outputPath = path.join(
-      outputDir,
-      'export_${format.name}_$timestamp.mp4',
-    );
-
-    // Prepare FFmpeg arguments based on format
-    final ffmpeg = ref.read(ffmpegServiceProvider);
-    final aspectRatio = switch (format) {
-      VideoExportFormat.mp4_169 => '16:9',
-      VideoExportFormat.mp4_916 => '9:16',
-      VideoExportFormat.mp4_11 => '1:1',
-      VideoExportFormat.gif => '16:9',
-    };
-
-    // Build complex filter for cursor overlay
-    final filters = <String>[
-      // Scale video to target aspect ratio
-      '[0:v]scale=${aspectRatio.split(':')[0]}*iw/${aspectRatio.split(':')[1]}:${aspectRatio.split(':')[1]}*iw/${aspectRatio.split(':')[0]}[scaled]',
-    ];
-
-    // Add cursor overlay if visible
-    if (cursorSettings.isVisible && cursorState.positions.isNotEmpty) {
-      // Create cursor overlay with proper scaling and opacity
-      filters.add(
-        '[scaled]overlay=x=${cursorState.positions.first.x}*W:y=${cursorState.positions.first.y}*H:enable=\'between(t,0,${cursorState.positions.last.timestamp/1000})\':alpha=${cursorSettings.opacity}[out]',
-      );
-    }
-
-    // Build FFmpeg command
-    final args = [
-      '-i', inputPath,
-      '-i', CursorTracker.getCursorImage(cursorState.positions.first.cursorType),
-      '-filter_complex', filters.join(';'),
-      '-map', '[out]',
-      '-c:v', 'libx264',
-      '-preset', 'medium',
-      '-crf', '23',
-    ];
-
-    // For GIF output
-    if (format == VideoExportFormat.gif) {
-      args.addAll([
-        '-f', 'gif',
-        outputPath.replaceAll('.mp4', '.gif'),
-      ]);
-    } else {
-      args.add(outputPath);
-    }
-
     try {
-      // Show progress dialog
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext dialogContext) => const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Exporting video...'),
-            ],
-          ),
-        ),
+      // Get original file name without extension
+      final originalFileName = path.basenameWithoutExtension(widget.videoPath);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final originalDir = path.dirname(widget.videoPath);
+      
+      // Create a folder with original name + timestamp
+      final exportFolder = path.join(originalDir, '${originalFileName}_$timestamp');
+      await Directory(exportFolder).create();
+
+      // Use original file name for the exported files
+      final newVideoPath = path.join(exportFolder, '$originalFileName.mp4');
+      final newCursorDataPath = path.join(exportFolder, '${originalFileName}_cursor_data.json');
+      final newZoomDataPath = path.join(exportFolder, '${originalFileName}_zoom_data.json');
+      final originalCursorDataPath = widget.videoPath.replaceAll('.mp4', '_cursor_data.json');
+
+      // Copy the video file
+      await File(widget.videoPath).copy(newVideoPath);
+
+      // Copy cursor data if it exists
+      if (File(originalCursorDataPath).existsSync()) {
+        await File(originalCursorDataPath).copy(newCursorDataPath);
+      }
+
+      // Export settings data
+      final timeline = ref.read(timelineProvider);
+      final zoomSettings = ref.read(timelineZoomSettingsProvider);
+      final zoomLayers = timeline.segments.where((s) => s.layerType == LayerType.zoom);
+      
+      // Prepare zoom data if zoom layers exist
+      final zoomData = zoomLayers.isNotEmpty ? {
+        'type': 'Mixed',  // Support both auto and manual layers
+        'manualLayers': zoomLayers
+          .where((layer) => !(zoomSettings[layer.properties['id']]?.isAutoZoom ?? true))
+          .map((layer) {
+            final settings = zoomSettings[layer.properties['id']];
+            return {
+              'startFrame': layer.startTime ~/ 33.33,
+              'endFrame': layer.endTime ~/ 33.33,
+              'startScale': settings?.scale ?? 1.0,
+              'endScale': settings?.scale ?? 1.0,
+              'targetX': settings?.target.dx ?? 0.5,
+              'targetY': settings?.target.dy ?? 0.5
+            };
+          }).toList(),
+        'autoLayers': zoomLayers
+          .where((layer) => zoomSettings[layer.properties['id']]?.isAutoZoom ?? true)
+          .map((layer) {
+            final settings = zoomSettings[layer.properties['id']];
+            return {
+              'startFrame': layer.startTime ~/ 33.33,
+              'endFrame': layer.endTime ~/ 33.33,
+              'minScale': 1.0,
+              'maxScale': settings?.scale ?? 2.5,
+              'followSpeed': 0.3,
+              'smoothing': 0.7
+            };
+          }).toList(),
+        'defaults': {
+          'defaultScale': 1.0,
+          'transitionDuration': 0.5,
+          'minScale': 1.0,
+          'maxScale': 2.5,
+          'followSpeed': 0.3,
+          'smoothing': 0.7
+        }
+      } : null;
+
+      // Prepare all settings data
+      final settingsData = {
+        'cursor': {
+          'size': ref.read(cursorSettingsProvider).size,
+          'opacity': ref.read(cursorSettingsProvider).opacity,
+          'tintColor': ref.read(cursorSettingsProvider).tintColor?.value,
+        },
+        'background': {
+          'color': ref.read(backgroundSettingsProvider).color?.value ?? Colors.black.value,
+          'cornerRadius': ref.read(backgroundSettingsProvider).cornerRadius,
+          'scale': ref.read(backgroundSettingsProvider).scale,
+        },
+        if (zoomData != null) 'zoom': zoomData
+      };
+
+      // Write settings data to file
+      await File(newZoomDataPath).writeAsString(jsonEncode(settingsData));
+
+      // Process the video using native component
+      final exportService = VideoExportService();
+      final exportedVideoPath = await exportService.processVideo(
+        videoPath: newVideoPath,
+        cursorDataPath: newCursorDataPath,
+        zoomDataPath: newZoomDataPath
       );
 
-      // Start FFmpeg process
-      final process = await Process.start('ffmpeg', args);
-      
-      // Wait for completion
-      final exitCode = await process.exitCode;
-      
-      // Close progress dialog
-      if (!mounted) return;
-      Navigator.of(context).pop();
-
-      if (exitCode == 0) {
-        // Show success message
-        if (!mounted) return;
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Video exported successfully to: $outputPath'),
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Open Folder',
-              onPressed: () async {
-                await Process.run('explorer.exe', ['/select,', outputPath]);
-              },
-            ),
+            duration: const Duration(seconds: 3),
+            content: Text('Exported to: ${path.basename(exportedVideoPath)}'),
           ),
         );
-      } else {
-        throw Exception('FFmpeg process failed with exit code: $exitCode');
       }
     } catch (e) {
-      // Close progress dialog if open
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-      
-      // Show error message
+      print('Export error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to export video: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            content: Text('Failed to export video: $e'),
+            duration: const Duration(seconds: 3),
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+      }
     }
+  }
+
+  void _updatePlaybackSpeed(double speed) {
+    setState(() => _playbackSpeed = speed);
   }
 
   // Helper method to check if a time is within any trim layer
@@ -444,8 +544,8 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
       
       // Calculate translation to center on target
       _currentTranslate = Offset(
-        (targetPosition.dx - 0.5) * videoWidth * (_currentScale - 1),
-        (targetPosition.dy - 0.5) * videoHeight * (_currentScale - 1),
+        (targetPosition.dx - 0.5) * videoWidth * (_currentScale - 1) / _currentScale,
+        (targetPosition.dy - 0.5) * videoHeight * (_currentScale - 1) / _currentScale,
       );
     } else {
       _currentScale = 1.0;
@@ -454,307 +554,245 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
 
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: _isFullScreen ? null : AppBar(
-        backgroundColor: Colors.black.withOpacity(0.7),
-        title: const Text('Video Editor'),
-        actions: [
-          IconButton(
-            icon: Icon(
-              _showEditor ? Icons.edit_off : Icons.edit,
-              color: Colors.white70,
-            ),
-            onPressed: () => setState(() => _showEditor = !_showEditor),
-          ),
-          PopupMenuButton<VideoExportFormat>(
-            icon: const Icon(Icons.save),
-            onSelected: (format) {
-              setState(() => _selectedFormat = format);
-              _exportVideo(format);
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: VideoExportFormat.mp4_169,
-                child: Text('Export as 16:9'),
-              ),
-              const PopupMenuItem(
-                value: VideoExportFormat.mp4_916,
-                child: Text('Export as 9:16 (Vertical)'),
-              ),
-              const PopupMenuItem(
-                value: VideoExportFormat.mp4_11,
-                child: Text('Export as 1:1 (Square)'),
-              ),
-              const PopupMenuItem(
-                value: VideoExportFormat.gif,
-                child: Text('Export as GIF'),
-              ),
-            ],
-          ),
-        ],
-        toolbarHeight: 48,
-        flexibleSpace: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onPanStart: (_) => windowManager.startDragging(),
-          child: Container(
+      body: Column(
+        children: [
+          // Top Bar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
+              color: const Color(0xFF0A0A0A),
               border: Border(
                 bottom: BorderSide(
-                  color: Colors.white.withOpacity(0.1),
-                  width: 1,
+                  color: Colors.white.withOpacity(0.05),
                 ),
               ),
             ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      path.basename(widget.videoPath),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      _formatDuration(player.state.duration),
+                      style: TextStyle(color: Colors.white.withOpacity(0.5)),
+                    ),
+                  ],
+                ),
+                ExportControls(
+                  isExporting: _isExporting,
+                  playbackSpeed: _playbackSpeed,
+                  onExport: _exportVideo,
+                  onSpeedChanged: _setPlaybackSpeed,
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
-      body: Column(
-        children: [
           Expanded(
             child: Row(
               children: [
-                // Video Area
+                // Video Area with zoom
                 Expanded(
-                  child: Transform(
-                    transform: Matrix4.identity()
-                      ..translate(-_currentTranslate.dx, -_currentTranslate.dy)
-                      ..scale(_currentScale),
-                    alignment: Alignment.center,
-                    filterQuality: FilterQuality.high,
-                    child: VideoBackgroundContainer(
-                      videoSize: const Size(1920, 1080),
-                      containerWidth: containerWidth,
-                      containerHeight: containerHeight,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Calculate actual video dimensions
-                          final videoAspectRatio = 16 / 9;
-                          final containerAspectRatio = constraints.maxWidth / constraints.maxHeight;
-                          
-                          double actualVideoWidth;
-                          double actualVideoHeight;
-                          
-                          if (containerAspectRatio > videoAspectRatio) {
-                            actualVideoHeight = constraints.maxHeight;
-                            actualVideoWidth = actualVideoHeight * videoAspectRatio;
-                          } else {
-                            actualVideoWidth = constraints.maxWidth;
-                            actualVideoHeight = actualVideoWidth / videoAspectRatio;
-                          }
-
-                          final videoX = (constraints.maxWidth - actualVideoWidth) / 2;
-                          final videoY = (constraints.maxHeight - actualVideoHeight) / 2;
-
-                          return Stack(
-                            children: [
-                              // Video container
-                              Positioned(
-                                left: videoX,
-                                top: videoY,
-                                width: actualVideoWidth,
-                                height: actualVideoHeight,
-                                child: ClipRect(
-                                  child: Stack(
-                                    children: [
-                                      // Base video
-                                      SizedBox.expand(
-                                        child: Video(
-                                          controller: controller,
-                                          filterQuality: FilterQuality.high,
-                                          fit: BoxFit.fill,
+                  child: Stack(
+                    children: [
+                      // Background for letterboxing/pillarboxing
+                      Container(
+                        color: Colors.grey[900],
+                      ),
+                      Center(
+                        child: SizedBox(
+                          width: videoWidth,
+                          height: videoHeight,
+                          child: ClipRect(
+                            child: Transform(
+                              transform: Matrix4.identity()
+                                ..translate(-_currentTranslate.dx, -_currentTranslate.dy)
+                                ..scale(_currentScale),
+                              alignment: Alignment.center,
+                              filterQuality: FilterQuality.high,
+                              child: Container(
+                                width: videoWidth,
+                                height: videoHeight,
+                                color: ref.watch(backgroundSettingsProvider).color ?? Colors.black,
+                                child: Stack(
+                                  children: [
+                                    Center(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(
+                                          ref.watch(backgroundSettingsProvider).cornerRadius,
                                         ),
-                                      ),
-                                      
-                                      // Cursor overlay as part of the video layer
-                                      if (_currentCursor != null && 
-                                          cursorSettings.isVisible && 
-                                          _currentOffset.dx >= 0 && 
-                                          _currentOffset.dy >= 0)
-                                        Positioned(
-                                          left: _currentOffset.dx * actualVideoWidth,
-                                          top: _currentOffset.dy * actualVideoHeight,
-                                          child: Transform.scale(
-                                            scale: cursorSettings.size,
-                                            child: Opacity(
-                                              opacity: cursorSettings.opacity,
-                                              child: ColorFiltered(
-                                                colorFilter: cursorSettings.tintColor != null
-                                                    ? ColorFilter.mode(
-                                                        cursorSettings.tintColor!,
-                                                        BlendMode.srcATop,
-                                                      )
-                                                    : const ColorFilter.mode(
-                                                        Colors.transparent,
-                                                        BlendMode.dst,
-                                                      ),
-                                                child: Image.asset(
-                                                  CursorTracker.getCursorImage(_currentCursor!.cursorType),
-                                                  width: 32,
-                                                  height: 32,
-                                                  filterQuality: FilterQuality.high,
-                                                ),
+                                        child: SizedBox(
+                                          width: videoWidth * ref.watch(backgroundSettingsProvider).scale,
+                                          height: videoHeight * ref.watch(backgroundSettingsProvider).scale,
+                                          child: Stack(
+                                            children: [
+                                              Video(
+                                                controller: controller,
+                                                filterQuality: FilterQuality.high,
+                                                fit: BoxFit.cover,
                                               ),
-                                            ),
+                                              // Cursor overlay inside video bounds
+                                              if (_currentCursor != null && 
+                                                  cursorSettings.isVisible && 
+                                                  _currentOffset.dx >= 0 && 
+                                                  _currentOffset.dy >= 0)
+                                                Positioned(
+                                                  left: _currentOffset.dx * (videoWidth * ref.watch(backgroundSettingsProvider).scale),
+                                                  top: _currentOffset.dy * (videoHeight * ref.watch(backgroundSettingsProvider).scale),
+                                                  child: Transform.scale(
+                                                    scale: cursorSettings.size,
+                                                    child: Opacity(
+                                                      opacity: cursorSettings.opacity,
+                                                      child: ColorFiltered(
+                                                        colorFilter: cursorSettings.tintColor != null
+                                                            ? ColorFilter.mode(
+                                                                cursorSettings.tintColor!,
+                                                                BlendMode.srcATop,
+                                                              )
+                                                            : const ColorFilter.mode(
+                                                                Colors.transparent,
+                                                                BlendMode.dst,
+                                                              ),
+                                                        child: Image.asset(
+                                                          CursorTracker.getCursorImage(_currentCursor!.cursorType),
+                                                          width: 32,
+                                                          height: 32,
+                                                          filterQuality: FilterQuality.high,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
                                           ),
                                         ),
-                                    ],
-                                  ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-
-                              // Video Controls Overlay
-                              if (!_isFullScreen)
-                                Positioned(
-                                  bottom: 0,
-                                  left: 0,
-                                  right: 0,
-                                  child: MouseRegion(
-                                    child: Container(
-                                      padding: const EdgeInsets.all(16),
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.bottomCenter,
-                                          end: Alignment.topCenter,
-                                          colors: [
-                                            Colors.black.withOpacity(0.7),
-                                            Colors.transparent,
-                                          ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Playback controls without zoom transform
+                      if (!_isFullScreen)
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: MouseRegion(
+                            child: Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                  colors: [
+                                    Colors.black.withOpacity(0.7),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(
+                                          player.state.playing ? Icons.pause : Icons.play_arrow,
+                                          color: Colors.white,
                                         ),
+                                        onPressed: () {
+                                          if (player.state.playing) {
+                                            player.pause();
+                                          } else {
+                                            player.play();
+                                          }
+                                        },
                                       ),
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Row(
+                                      StreamBuilder(
+                                        stream: player.stream.volume,
+                                        builder: (context, snapshot) {
+                                          return Row(
                                             children: [
                                               IconButton(
                                                 icon: Icon(
-                                                  player.state.playing ? Icons.pause : Icons.play_arrow,
+                                                  player.state.volume == 0
+                                                      ? Icons.volume_off
+                                                      : Icons.volume_up,
                                                   color: Colors.white,
                                                 ),
                                                 onPressed: () {
-                                                  if (!player.state.playing) {
-                                                    // Check if we're starting playback in a trim region
-                                                    final timeline = ref.read(timelineProvider);
-                                                    final currentTimeMs = player.state.position.inMilliseconds;
-                                                    
-                                                    final trimLayers = timeline.segments
-                                                        .where((segment) => segment.isLayer && segment.layerType == LayerType.trim)
-                                                        .toList()
-                                                      ..sort((a, b) => a.startTime.compareTo(b.startTime));
-                                                    
-                                                    // Find if we're in a trim region
-                                                    for (final trimLayer in trimLayers) {
-                                                      if (currentTimeMs >= trimLayer.startTime && currentTimeMs < trimLayer.endTime) {
-                                                        // Calculate next valid position after all consecutive trim regions
-                                                        int nextValidPosition = trimLayer.endTime + 1;
-                                                        
-                                                        for (int i = trimLayers.indexOf(trimLayer) + 1; i < trimLayers.length; i++) {
-                                                          if (trimLayers[i].startTime <= nextValidPosition) {
-                                                            nextValidPosition = trimLayers[i].endTime + 1;
-                                                          } else {
-                                                            break;
-                                                          }
-                                                        }
-                                                        
-                                                        // Seek to end of trim region before starting playback
-                                                        _lastSeekTime = nextValidPosition;
-                                                        player.seek(Duration(milliseconds: nextValidPosition));
-                                                        break;
-                                                      }
-                                                    }
-                                                  }
-                                                  player.playOrPause();
+                                                  player.setVolume(
+                                                      player.state.volume == 0 ? 100 : 0);
                                                 },
                                               ),
-                                              StreamBuilder(
-                                                stream: player.stream.volume,
-                                                builder: (context, snapshot) {
-                                                  return Row(
-                                                    children: [
-                                                      IconButton(
-                                                        icon: Icon(
-                                                          player.state.volume == 0
-                                                              ? Icons.volume_off
-                                                              : Icons.volume_up,
-                                                          color: Colors.white,
-                                                        ),
-                                                        onPressed: () {
-                                                          player.setVolume(
-                                                              player.state.volume == 0 ? 100 : 0);
-                                                        },
-                                                      ),
-                                                      SizedBox(
-                                                        width: 100,
-                                                        child: Slider(
-                                                          value: player.state.volume,
-                                                          max: 100,
-                                                          onChanged: (value) {
-                                                            player.setVolume(value);
-                                                          },
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  );
-                                                },
+                                              SizedBox(
+                                                width: 100,
+                                                child: Slider(
+                                                  value: player.state.volume,
+                                                  max: 100,
+                                                  onChanged: (value) {
+                                                    player.setVolume(value);
+                                                  },
+                                                ),
                                               ),
                                             ],
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(
+                                          autoZoom.enabled ? Icons.zoom_in : Icons.zoom_out_map,
+                                          color: autoZoom.enabled ? Colors.blue : Colors.white,
+                                          size: 28,
+                                        ),
+                                        tooltip: 'Auto Zoom',
+                                        onPressed: () {
+                                          ref.read(autoZoomProvider.notifier).toggleEnabled();
+                                        },
+                                      ),
+                                      const SizedBox(width: 8),
+                                      PopupMenuButton<double>(
+                                        icon: const Icon(Icons.speed, color: Colors.white),
+                                        onSelected: _setPlaybackSpeed,
+                                        itemBuilder: (context) => [
+                                          const PopupMenuItem(
+                                            value: 0.5,
+                                            child: Text('0.5x'),
                                           ),
-                                          Row(
-                                            children: [
-                                              IconButton(
-                                                icon: Icon(
-                                                  autoZoom.enabled ? Icons.zoom_in : Icons.zoom_out_map,
-                                                  color: autoZoom.enabled ? Colors.blue : Colors.white,
-                                                  size: 28,
-                                                ),
-                                                tooltip: 'Auto Zoom',
-                                                onPressed: () {
-                                                  ref.read(autoZoomProvider.notifier).toggleEnabled();
-                                                },
-                                              ),
-                                              const SizedBox(width: 8),
-                                              PopupMenuButton<double>(
-                                                icon: const Icon(Icons.speed, color: Colors.white),
-                                                onSelected: _setPlaybackSpeed,
-                                                itemBuilder: (context) => [
-                                                  const PopupMenuItem(
-                                                    value: 0.5,
-                                                    child: Text('0.5x'),
-                                                  ),
-                                                  const PopupMenuItem(
-                                                    value: 1.0,
-                                                    child: Text('1.0x'),
-                                                  ),
-                                                  const PopupMenuItem(
-                                                    value: 1.5,
-                                                    child: Text('1.5x'),
-                                                  ),
-                                                  const PopupMenuItem(
-                                                    value: 2.0,
-                                                    child: Text('2.0x'),
-                                                  ),
-                                                ],
-                                              ),
-                                              IconButton(
-                                                icon: Icon(
-                                                  _isFullScreen
-                                                      ? Icons.fullscreen_exit
-                                                      : Icons.fullscreen,
-                                                  color: Colors.white,
-                                                ),
-                                                onPressed: _toggleFullScreen,
-                                              ),
-                                            ],
+                                          const PopupMenuItem(
+                                            value: 1.0,
+                                            child: Text('1.0x'),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 1.5,
+                                            child: Text('1.5x'),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 2.0,
+                                            child: Text('2.0x'),
                                           ),
                                         ],
                                       ),
-                                    ),
+                                    ],
                                   ),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 
@@ -763,7 +801,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
                   Container(
                     width: 300,
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.8),
+                      color: const Color(0xFF1E1E1E),
                       border: Border(
                         left: BorderSide(
                           color: Colors.white.withOpacity(0.1),
@@ -774,145 +812,386 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
                     child: SingleChildScrollView(
                       child: Column(
                         children: [
-                          const BackgroundSettingsPanel(),
-                          // Show zoom settings only when a zoom layer is selected
-                          if (timeline.selectedSegments.isNotEmpty &&
-                              timeline.segments
-                                  .where((s) => timeline.selectedSegments.contains(s.properties['id']))
-                                  .any((s) => s.layerType == LayerType.zoom))
-                            Consumer(
-                              builder: (context, ref, child) {
-                                final selectedLayer = timeline.segments
-                                    .firstWhere((s) => 
-                                      timeline.selectedSegments.contains(s.properties['id']) &&
-                                      s.layerType == LayerType.zoom);
-                                final layerId = selectedLayer.properties['id'] as String;
-                                final zoomSettings = ref.watch(timelineZoomSettingsProvider)[layerId] ??
-                                    TimelineZoomSettings(layerId: layerId);
-                                final notifier = ref.read(timelineZoomSettingsProvider.notifier);
-
-                                return Container(
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      top: BorderSide(
-                                        color: Colors.white.withOpacity(0.1),
-                                        width: 1,
+                          // Cursor Settings Panel
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF252525),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: Colors.white.withOpacity(0.1),
+                                  width: 1,
+                                ),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.mouse, color: Colors.blue),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Cursor Settings',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          const Icon(Icons.zoom_in, color: Colors.white70),
-                                          const SizedBox(width: 8),
-                                          const Text(
-                                            'Zoom Layer Settings',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                            ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Consumer(
+                                  builder: (context, ref, _) {
+                                    final settings = ref.watch(cursorSettingsProvider);
+                                    final notifier = ref.read(cursorSettingsProvider.notifier);
+                                    
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Size: ${(settings.size * 100).toStringAsFixed(0)}%',
+                                          style: const TextStyle(color: Colors.white70),
+                                        ),
+                                        SliderTheme(
+                                          data: SliderThemeData(
+                                            activeTrackColor: Colors.blue,
+                                            thumbColor: Colors.blue,
+                                            overlayColor: Colors.blue.withOpacity(0.2),
+                                            inactiveTrackColor: Colors.grey[800],
                                           ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 16),
-                                      
-                                      // Auto Zoom Toggle
-                                      SwitchListTile(
-                                        title: const Text(
-                                          'Auto Zoom',
-                                          style: TextStyle(color: Colors.white70),
+                                          child: Slider(
+                                            value: settings.size,
+                                            min: 0.5,
+                                            max: 2.0,
+                                            onChanged: (value) => notifier.updateSize(value),
+                                          ),
                                         ),
-                                        subtitle: const Text(
-                                          'Follow cursor automatically',
-                                          style: TextStyle(color: Colors.white54, fontSize: 12),
+                                        
+                                        const SizedBox(height: 16),
+                                        
+                                        Text(
+                                          'Opacity: ${(settings.opacity * 100).toStringAsFixed(0)}%',
+                                          style: const TextStyle(color: Colors.white70),
                                         ),
-                                        value: zoomSettings.isAutoZoom,
-                                        onChanged: (value) => notifier.updateSettings(
-                                          layerId,
-                                          isAutoZoom: value,
+                                        SliderTheme(
+                                          data: SliderThemeData(
+                                            activeTrackColor: Colors.blue,
+                                            thumbColor: Colors.blue,
+                                            overlayColor: Colors.blue.withOpacity(0.2),
+                                            inactiveTrackColor: Colors.grey[800],
+                                          ),
+                                          child: Slider(
+                                            value: settings.opacity,
+                                            min: 0.1,
+                                            max: 1.0,
+                                            onChanged: (value) => notifier.updateOpacity(value),
+                                          ),
                                         ),
-                                      ),
-                                      
-                                      const SizedBox(height: 16),
-                                      
-                                      // Manual Target Position
-                                      if (!zoomSettings.isAutoZoom) ...[
-                                        const Text(
-                                          'Target Position',
-                                          style: TextStyle(color: Colors.white70),
-                                        ),
-                                        const SizedBox(height: 8),
+                                        
+                                        const SizedBox(height: 16),
+                                        
                                         Row(
                                           children: [
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    'X: ${zoomSettings.target.dx.toStringAsFixed(2)}',
-                                                    style: const TextStyle(color: Colors.white54),
-                                                  ),
-                                                  Slider(
-                                                    value: zoomSettings.target.dx,
-                                                    min: 0,
-                                                    max: 1,
-                                                    onChanged: (value) => notifier.updateSettings(
-                                                      layerId,
-                                                      target: Offset(value, zoomSettings.target.dy),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
+                                            const Text(
+                                              'Cursor Color',
+                                              style: TextStyle(color: Colors.white70),
                                             ),
-                                            const SizedBox(width: 16),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    'Y: ${zoomSettings.target.dy.toStringAsFixed(2)}',
-                                                    style: const TextStyle(color: Colors.white54),
-                                                  ),
-                                                  Slider(
-                                                    value: zoomSettings.target.dy,
-                                                    min: 0,
-                                                    max: 1,
-                                                    onChanged: (value) => notifier.updateSettings(
-                                                      layerId,
-                                                      target: Offset(zoomSettings.target.dx, value),
+                                            const SizedBox(width: 8),
+                                            InkWell(
+                                              onTap: () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (context) => Theme(
+                                                    data: ThemeData.dark(),
+                                                    child: AlertDialog(
+                                                      backgroundColor: const Color(0xFF2A2A2A),
+                                                      title: const Text('Select Cursor Color'),
+                                                      content: SingleChildScrollView(
+                                                        child: Column(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          children: [
+                                                            _ColorButton(
+                                                              color: null,
+                                                              name: 'Default',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(null);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                            _ColorButton(
+                                                              color: Colors.white,
+                                                              name: 'White',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(Colors.white);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                            _ColorButton(
+                                                              color: Colors.black,
+                                                              name: 'Black',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(Colors.black);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                            _ColorButton(
+                                                              color: Colors.blue,
+                                                              name: 'Blue',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(Colors.blue);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                            _ColorButton(
+                                                              color: Colors.red,
+                                                              name: 'Red',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(Colors.red);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                            _ColorButton(
+                                                              color: Colors.green,
+                                                              name: 'Green',
+                                                              onSelect: () {
+                                                                notifier.updateTintColor(Colors.green);
+                                                                Navigator.pop(context);
+                                                              },
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
                                                     ),
                                                   ),
-                                                ],
+                                                );
+                                              },
+                                              child: Container(
+                                                width: 24,
+                                                height: 24,
+                                                decoration: BoxDecoration(
+                                                  color: settings.tintColor ?? Colors.transparent,
+                                                  border: Border.all(
+                                                    color: Colors.white.withOpacity(0.3),
+                                                  ),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                ),
+                                                child: settings.tintColor == null
+                                                    ? const Icon(Icons.block, size: 16, color: Colors.white54)
+                                                    : null,
                                               ),
                                             ),
                                           ],
                                         ),
                                       ],
-                                      
-                                      const SizedBox(height: 16),
-                                      
-                                      // Scale Slider
-                                      Text(
-                                        'Scale: ${(zoomSettings.scale * 100).toStringAsFixed(1)}%',
-                                        style: const TextStyle(color: Colors.white70),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Background Settings Panel
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF151515),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: Colors.white.withOpacity(0.05),
+                                  width: 1,
+                                ),
+                              ),
+                            ),
+                            child: const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.palette, color: Colors.green),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Background Settings',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                      Slider(
-                                        value: zoomSettings.scale,
-                                        min: 1.0,
-                                        max: 5.0,
-                                        onChanged: (value) => notifier.updateSettings(
-                                          layerId,
-                                          scale: value,
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: 16),
+                                BackgroundSettingsPanel(),
+                              ],
+                            ),
+                          ),
+
+                          // Zoom Settings Panel (Only shown when zoom layer is selected)
+                          if (timeline.selectedSegments.isNotEmpty &&
+                              timeline.segments
+                                  .where((s) => timeline.selectedSegments.contains(s.properties['id']))
+                                  .any((s) => s.layerType == LayerType.zoom))
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF151515),
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: Colors.white.withOpacity(0.05),
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Row(
+                                    children: [
+                                      Icon(Icons.zoom_in, color: Colors.orange),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Zoom Layer Settings',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
                                         ),
                                       ),
                                     ],
                                   ),
-                                );
-                              },
+                                  const SizedBox(height: 16),
+                                  Consumer(
+                                    builder: (context, ref, child) {
+                                      final selectedLayer = timeline.segments
+                                          .firstWhere((s) => 
+                                            timeline.selectedSegments.contains(s.properties['id']) &&
+                                            s.layerType == LayerType.zoom);
+                                      final layerId = selectedLayer.properties['id'] as String;
+                                      final zoomSettings = ref.watch(timelineZoomSettingsProvider)[layerId] ??
+                                          TimelineZoomSettings(layerId: layerId);
+                                      final notifier = ref.read(timelineZoomSettingsProvider.notifier);
+
+                                      return Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          SwitchListTile(
+                                            title: const Text(
+                                              'Auto Zoom',
+                                              style: TextStyle(color: Colors.white70),
+                                            ),
+                                            subtitle: const Text(
+                                              'Follow cursor automatically',
+                                              style: TextStyle(color: Colors.white54, fontSize: 12),
+                                            ),
+                                            value: zoomSettings.isAutoZoom,
+                                            activeColor: Colors.orange,
+                                            onChanged: (value) => notifier.updateSettings(
+                                              layerId,
+                                              isAutoZoom: value,
+                                            ),
+                                          ),
+                                          
+                                          const SizedBox(height: 16),
+                                          
+                                          if (!zoomSettings.isAutoZoom) ...[
+                                            const Text(
+                                              'Target Position',
+                                              style: TextStyle(color: Colors.white70),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        'X: ${zoomSettings.target.dx.toStringAsFixed(2)}',
+                                                        style: const TextStyle(color: Colors.white54),
+                                                      ),
+                                                      SliderTheme(
+                                                        data: SliderThemeData(
+                                                          activeTrackColor: Colors.orange,
+                                                          thumbColor: Colors.orange,
+                                                          overlayColor: Colors.orange.withOpacity(0.2),
+                                                          inactiveTrackColor: Colors.grey[800],
+                                                        ),
+                                                        child: Slider(
+                                                          value: zoomSettings.target.dx,
+                                                          min: 0,
+                                                          max: 1,
+                                                          onChanged: (value) => notifier.updateSettings(
+                                                            layerId,
+                                                            target: Offset(value, zoomSettings.target.dy),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 16),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        'Y: ${zoomSettings.target.dy.toStringAsFixed(2)}',
+                                                        style: const TextStyle(color: Colors.white54),
+                                                      ),
+                                                      SliderTheme(
+                                                        data: SliderThemeData(
+                                                          activeTrackColor: Colors.orange,
+                                                          thumbColor: Colors.orange,
+                                                          overlayColor: Colors.orange.withOpacity(0.2),
+                                                          inactiveTrackColor: Colors.grey[800],
+                                                        ),
+                                                        child: Slider(
+                                                          value: zoomSettings.target.dy,
+                                                          min: 0,
+                                                          max: 1,
+                                                          onChanged: (value) => notifier.updateSettings(
+                                                            layerId,
+                                                            target: Offset(zoomSettings.target.dx, value),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                          
+                                          const SizedBox(height: 16),
+                                          
+                                          Text(
+                                            'Scale: ${(zoomSettings.scale * 100).toStringAsFixed(0)}%',
+                                            style: const TextStyle(color: Colors.white70),
+                                          ),
+                                          SliderTheme(
+                                            data: SliderThemeData(
+                                              activeTrackColor: Colors.orange,
+                                              thumbColor: Colors.orange,
+                                              overlayColor: Colors.orange.withOpacity(0.2),
+                                              inactiveTrackColor: Colors.grey[800],
+                                            ),
+                                            child: Slider(
+                                              value: zoomSettings.scale,
+                                              min: 1.0,
+                                              max: 5.0,
+                                              onChanged: (value) => notifier.updateSettings(
+                                                layerId,
+                                                scale: value,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
                         ],
                       ),
@@ -940,4 +1219,38 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
       ),
     );
   }
-} 
+}
+
+class _ColorButton extends StatelessWidget {
+  final Color? color;
+  final String name;
+  final VoidCallback onSelect;
+
+  const _ColorButton({
+    required this.color,
+    required this.name,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: color ?? Colors.transparent,
+          border: Border.all(
+            color: Colors.black.withOpacity(0.3),
+          ),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: color == null
+            ? const Icon(Icons.block, size: 16)
+            : null,
+      ),
+      title: Text(name),
+      onTap: onSelect,
+    );
+  } 
+}

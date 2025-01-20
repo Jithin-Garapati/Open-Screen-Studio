@@ -1,13 +1,24 @@
+import 'package:flutter/foundation.dart';
 
 enum CursorType {
-  normal('cursor_normal.png'),
-  pointer('cursor_pointer.png'),
-  text('cursor_text.png'),
-  resizeHorizontal('cursor_resize_horizontal.png'),
-  resizeVertical('cursor_resize_vertical.png');
+  normal(65539, 'cursor_normal.png'),
+  text(65541, 'cursor_text.png'),
+  hand(65567, 'cursor_hand.png'),
+  resizeHorizontal(65569, 'cursor_resize_horizontal.png'),
+  resizeVertical(65551, 'cursor_resize_vertical.png');
 
-  final String assetPath;
-  const CursorType(this.assetPath);
+  final int value;
+  final String assetName;
 
-  String get fullAssetPath => 'assets/cursors/$assetPath';
-} 
+  const CursorType(this.value, this.assetName);
+
+  String get fullAssetPath => 'assets/cursors/$assetName';
+
+  static CursorType fromValue(int value) {
+    debugPrint('Converting cursor value: $value');
+    return values.firstWhere(
+      (type) => type.value == value,
+      orElse: () => CursorType.normal,
+    );
+  }
+}

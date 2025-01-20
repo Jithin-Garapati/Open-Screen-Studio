@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
+import '../models/cursor_type.dart';
 
 class CursorOverlay extends StatelessWidget {
-  final String cursorType;
+  final int cursorType;
   final Animation<double>? scaleAnimation;
   
   const CursorOverlay({
     super.key,
-    this.cursorType = 'normal',
+    this.cursorType = 65539, // Default to normal cursor
     this.scaleAnimation,
   });
 
@@ -15,7 +16,7 @@ class CursorOverlay extends StatelessWidget {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 150),
       child: Image.asset(
-        'assets/cursors/cursor_$cursorType.png',
+        CursorType.fromValue(cursorType).fullAssetPath,
         key: ValueKey(cursorType),
         width: 32,
         height: 32,

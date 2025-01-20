@@ -1,6 +1,10 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/cursor_settings.dart';
+
+final cursorPositionProvider = StateProvider<Offset?>((ref) => null);
+final cursorTypeProvider = StateProvider<int>((ref) => 65539); // Default to normal cursor
 
 class CursorSettingsNotifier extends StateNotifier<CursorSettings> {
   CursorSettingsNotifier() : super(const CursorSettings());
@@ -32,4 +36,4 @@ class CursorSettingsNotifier extends StateNotifier<CursorSettings> {
 
 final cursorSettingsProvider = StateNotifierProvider<CursorSettingsNotifier, CursorSettings>((ref) {
   return CursorSettingsNotifier();
-}); 
+});
