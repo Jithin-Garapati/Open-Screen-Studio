@@ -39,51 +39,41 @@ class PreviewService {
   Stream<double> get systemAudioLevelStream => _systemAudioLevelController.stream;
 
   void startPreview(DisplayInfo display) async {
-    debugPrint('Starting preview for display: ${display.name} (${display.width}x${display.height} at ${display.x},${display.y})');
     stopPreview();
     
     try {
       // Only treat it as a window if it's explicitly marked as one
       const isWindow = false;  // For now, treat all as displays until window capture is implemented
-      debugPrint('Display type: ${isWindow ? "Window" : "Screen"}, ID: ${display.id}');
 
       _hdcScreen = GetDC(NULL);  // Always get the entire screen DC
       if (_hdcScreen == NULL) {
         final error = GetLastError();
-        debugPrint('Failed to get screen DC: $error');
         throw Exception('Failed to get screen DC');
       }
-      debugPrint('Got screen DC: $_hdcScreen');
 
       _hdcMemory = CreateCompatibleDC(_hdcScreen!);
       if (_hdcMemory == NULL) {
         final error = GetLastError();
-        debugPrint('Failed to create compatible DC: $error');
         ReleaseDC(NULL, _hdcScreen!);
         throw Exception('Failed to create compatible DC');
       }
-      debugPrint('Created memory DC: $_hdcMemory');
 
       _hBitmap = CreateCompatibleBitmap(_hdcScreen!, display.width, display.height);
       if (_hBitmap == NULL) {
         final error = GetLastError();
-        debugPrint('Failed to create compatible bitmap: $error');
         DeleteDC(_hdcMemory!);
         ReleaseDC(NULL, _hdcScreen!);
         throw Exception('Failed to create compatible bitmap');
       }
-      debugPrint('Created bitmap: $_hBitmap (${display.width}x${display.height})');
 
       final oldBitmap = SelectObject(_hdcMemory!, _hBitmap!);
       if (oldBitmap == NULL) {
         final error = GetLastError();
-        debugPrint('Failed to select bitmap: $error');
         DeleteObject(_hBitmap!);
         DeleteDC(_hdcMemory!);
         ReleaseDC(NULL, _hdcScreen!);
         throw Exception('Failed to select bitmap into DC');
       }
-      debugPrint('Selected bitmap into DC');
 
       _bmi = calloc<BITMAPINFO>();
       _bmi!.ref.bmiHeader.biSize = sizeOf<BITMAPINFOHEADER>();
@@ -92,17 +82,12 @@ class PreviewService {
       _bmi!.ref.bmiHeader.biPlanes = 1;
       _bmi!.ref.bmiHeader.biBitCount = 32;
       _bmi!.ref.bmiHeader.biCompression = BI_COMPRESSION.BI_RGB;
-      debugPrint('Initialized BITMAPINFO: ${display.width}x${display.height}');
 
       _pixels = calloc<Uint8>(display.width * display.height * 4);
-      debugPrint('Allocated pixel buffer: ${display.width * display.height * 4} bytes');
       
       _isCapturing = true;
       _startCapture(display);
-      debugPrint('Started capture timer');
-    } catch (e, stack) {
-      debugPrint('Error starting preview: $e');
-      debugPrint('Stack trace: $stack');
+    } catch (e) {
       _cleanupScreenCapture();
       rethrow;
     }
@@ -110,16 +95,13 @@ class PreviewService {
 
   void _startCapture(DisplayInfo display) {
     if (!_isCapturing) {
-      debugPrint('Not capturing, returning');
       return;
     }
 
-    debugPrint('Starting capture timer for display: ${display.name}');
     _previewTimer?.cancel();
     
     _previewTimer = Timer.periodic(captureInterval, (timer) async {
       if (!_isCapturing) {
-        debugPrint('Capture stopped, canceling timer');
         timer.cancel();
         return;
       }
@@ -139,10 +121,8 @@ class PreviewService {
 
         if (blitResult == 0) {
           final error = GetLastError();
-          debugPrint('BitBlt failed: $error');
           throw Exception('Failed to copy screen content');
         }
-        debugPrint('Captured screen frame');
 
         final dibResult = GetDIBits(
           _hdcMemory!,
@@ -156,7 +136,6 @@ class PreviewService {
 
         if (dibResult == 0) {
           final error = GetLastError();
-          debugPrint('GetDIBits failed: $error');
           throw Exception('Failed to get bitmap data');
         }
 
@@ -167,7 +146,6 @@ class PreviewService {
           display.height,
           ui.PixelFormat.bgra8888,
           (image) {
-            debugPrint('Decoded frame: ${image.width}x${image.height}');
             _lastFrame = image;
             completer.complete(image);
             _previewStreamController.add(image);
@@ -176,9 +154,9 @@ class PreviewService {
           targetHeight: display.height ~/ 2,
         );
         await completer.future;
-      } catch (e, stack) {
-        debugPrint('Error during capture: $e');
-        debugPrint('Stack trace: $stack');
+      } catch (e) {
+        _cleanupScreenCapture();
+        rethrow;
       }
     });
   }

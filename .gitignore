@@ -55,3 +55,41 @@ app.*.map.json
 *.gif
 /recordings/
 /exports/
+
+# Visual Studio / C++
+.vs/
+x64/
+Debug/
+Release/
+*.user
+*.userosscache
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+
+# Local configuration
+*.env
+*.env.local
+local.properties
+
+# Build outputs
+Videoeditor/x64/
+Videoeditor/Debug/
+Videoeditor/Release/
+Videoeditor/*.exe
+Videoeditor/*.dll
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini

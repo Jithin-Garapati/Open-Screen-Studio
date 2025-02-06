@@ -7,7 +7,6 @@ import '../models/display_info.dart';
 import '../services/screen_selector_service.dart';
 import '../services/screen_recorder_service.dart';
 import '../services/cursor_overlay_service.dart';
-import '../services/recording_navigation_service.dart';
 import 'cursor_tracking_controller.dart';
 import '../features/recording/domain/entities/screen_info.dart';
 import 'dart:async';
@@ -17,6 +16,7 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import '../services/cursor_tracker.dart';
 import '../providers/cursor_settings_provider.dart';
+import '../screens/video_editor_screen.dart';
 
 enum RecordingStatus {
   idle,
@@ -334,14 +334,22 @@ class RecordingController extends StateNotifier<RecordingState> {
       }
       
       // Stop cursor overlay and tracking
-      ref.read(cursorTrackingProvider.notifier).stopTracking();
+      if (_context != null && _context!.mounted) {
+        ref.read(cursorTrackingProvider.notifier).stopTracking(outputPath, _context!);
+      }
       _cursorOverlayService.stopRecording();
       
       state = state.copyWith(status: RecordingStatus.saved);
       
       // Navigate only after everything is cleaned up
       if (_context != null && _context!.mounted) {
-        RecordingNavigationService.stopRecording(ref, _context!, outputPath);
+        Future.microtask(() {
+          Navigator.of(_context!).pushReplacement(
+            MaterialPageRoute(
+              builder: (context) => VideoEditorScreen(videoPath: outputPath),
+            ),
+          );
+        });
       }
       
       return outputPath;

@@ -1,0 +1,15 @@
+// Configuration: All Configurations
+// Platform: x64 (recommended for OpenCV)
+
+// C/C++ -> General -> Additional Include Directories
+C:\opencv\build\include
+
+// Linker -> General -> Additional Library Directories
+C:\opencv\build\x64\vc16\lib
+
+// Linker -> Input -> Additional Dependencies
+// For Debug configuration:
+opencv_world480d.lib
+
+// For Release configuration:
+opencv_world480.lib 

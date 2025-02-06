@@ -1,70 +1,107 @@
 # OpenScreen Studio
 
-An opinionated screen recording and editing app for Windows built with Flutter Desktop.
+An opinionated screen recording and editing app for Windows built with Flutter Desktop and C++.
 
 ## Features
 
-- Screen recording with automatic cursor tracking
-- Advanced cursor effects (smoothing, size adjustment, hiding)
 - Automatic zooming on cursor actions
-- Manual zoom layers with customizable settings
-- Background customization with colors and rounded corners
-- Timeline-based editing with multiple layer types
-- Export to various formats (16:9, 9:16, 1:1, GIF)
+- Smooth cursor animation
+- Adjustable cursor sizes and colors
+- Vertical/horizontal exports for social media
+- Custom cursor overlay during recording
+- Advanced post-recording effects
+  - Cursor smoothing
+  - Size adjustment
+  - Cursor hiding
+  - Looping
+- Intuitive editor for:
+  - Manual/automatic zoom
+  - Background styling
+  - Spacing adjustments
+  - Cut/speed-up features
 
 ## Requirements
 
-- Windows 10 or later
-- Flutter SDK (>=3.0.0)
-- Visual Studio Build Tools
-- Git
+### Frontend (Flutter)
+- Flutter SDK 3.0 or higher
+- Dart SDK 2.17 or higher
+- Windows 10 or higher
 
-## Development Setup
+### Backend (C++)
+- Visual Studio 2022 with C++ Desktop Development
+- OpenCV 4.1.0 or higher
+- CMake 3.15 or higher
+- Windows SDK 10.0 or higher
+
+## Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/open_screen_studio.git
-cd open_screen_studio
+git clone https://github.com/yourusername/OpenScreenStudio.git
+cd OpenScreenStudio
 ```
 
-2. Install dependencies:
+2. Install Flutter dependencies:
 ```bash
 flutter pub get
 ```
 
-3. Run the app:
+3. Build C++ backend:
+```bash
+cd Videoeditor
+build.bat
+```
+
+4. Run the app:
 ```bash
 flutter run -d windows
 ```
 
-## Building
+## Project Structure
 
-To create a release build:
+```
+lib/                    # Flutter frontend code
+├── screens/           # UI screens
+├── widgets/           # Reusable widgets
+├── models/            # Data models
+├── controllers/       # State management
+├── services/          # Platform services
+└── utils/            # Helper functions
 
+Videoeditor/           # C++ backend code
+├── Videoeditor/      # Core processing code
+├── include/          # Header files
+└── cursors/          # Cursor assets
+```
+
+## Building for Release
+
+1. Build the C++ backend in Release mode:
+```bash
+cd Videoeditor
+build.bat Release
+```
+
+2. Build Flutter app:
 ```bash
 flutter build windows
 ```
 
-The built application will be available in `build/windows/runner/Release/`.
+The release build will be available in `build/windows/runner/Release/`.
 
-## Project Structure
+## Development
 
-```
-lib/
-├── src/
-│   ├── features/          # Feature modules
-│   │   ├── background/    # Background customization
-│   │   ├── recording/     # Screen recording
-│   │   ├── timeline/      # Timeline editing
-│   │   └── zoom/          # Zoom functionality
-│   ├── screens/          # App screens
-│   ├── widgets/          # Reusable widgets
-│   ├── models/           # Data models
-│   ├── providers/        # State management
-│   ├── services/         # Platform services
-│   └── utils/           # Helper functions
-└── main.dart            # App entry point
-```
+### Frontend Development
+- Use `flutter run -d windows` for development
+- Hot reload is supported
+- State management with Riverpod
+- UI components follow Material Design 3
+
+### Backend Development
+- Open `Videoeditor.sln` in Visual Studio 2022
+- Build using Visual Studio or `build.bat`
+- OpenCV is required for video processing
+- Cursor overlay system uses Windows API
 
 ## Contributing
 
@@ -77,3 +114,9 @@ lib/
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- OpenCV for video processing
+- Flutter team for Windows support
+- Contributors and testers

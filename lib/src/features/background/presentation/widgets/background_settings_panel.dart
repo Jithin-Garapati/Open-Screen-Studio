@@ -28,9 +28,9 @@ class BackgroundSettingsPanel extends ConsumerWidget {
           const SizedBox(height: 16),
           
           // Color Picker
-          Text(
+          const Text(
             'Background Color',
-            style: const TextStyle(color: Colors.white70),
+            style: TextStyle(color: Colors.white70),
           ),
           const SizedBox(height: 8),
           Container(

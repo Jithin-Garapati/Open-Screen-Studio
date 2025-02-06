@@ -85,9 +85,6 @@ class CursorTracker {
     final sizeweHandle = LoadCursor(NULL, IDC_SIZEWE);
     final sizensHandle = LoadCursor(NULL, IDC_SIZENS);
 
-    debugPrint('Mapping cursor handle: $windowsCursorHandle');
-    debugPrint('Standard handles - Arrow: $arrowHandle, IBeam: $ibeamHandle, Hand: $handHandle');
-
     // Compare with standard cursor handles
     if (windowsCursorHandle == arrowHandle) {
       return 65539; // Normal cursor

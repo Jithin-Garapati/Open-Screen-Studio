@@ -6,7 +6,6 @@ import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart';
 import '../models/display_info.dart';
 import 'cursor_overlay_service.dart';
 import 'ffmpeg_service.dart';
@@ -174,8 +173,6 @@ class ScreenRecorderService {
     final isWindow = hwnd != 0;
 
     try {
-      debugPrint('Capturing frame for ${isWindow ? "window" : "screen"}: ${_selectedDisplay!.name}');
-      
       // Get the screen DC
       hdcScreen = GetDC(NULL);
       if (hdcScreen == NULL) {
@@ -212,7 +209,6 @@ class ScreenRecorderService {
       }
 
       if (isWindow) {
-        debugPrint('Using PrintWindow for window capture');
         // For window capture, use PrintWindow
         final result = PrintWindow(
           hwnd,
@@ -222,11 +218,9 @@ class ScreenRecorderService {
 
         if (result == 0) {
           final error = GetLastError();
-          debugPrint('PrintWindow failed with error: $error');
           throw Exception('Failed to capture window content');
         }
       } else {
-        debugPrint('Using BitBlt for screen capture');
         // For screen capture, use BitBlt
         final blitResult = BitBlt(
           hdcMemory,
@@ -242,7 +236,6 @@ class ScreenRecorderService {
 
         if (blitResult == 0) {
           final error = GetLastError();
-          debugPrint('BitBlt failed with error: $error');
           throw Exception('Failed to copy screen content');
         }
       }
@@ -271,12 +264,10 @@ class ScreenRecorderService {
 
         if (dibResult == 0) {
           final error = GetLastError();
-          debugPrint('GetDIBits failed with error: $error');
           throw Exception('Failed to get bitmap data');
         }
 
         // Create Flutter Image
-        debugPrint('Creating Flutter Image...');
         final completer = Completer<ui.Image>();
         ui.decodeImageFromPixels(
           pixels.asTypedList(width * height * 4),
@@ -293,13 +284,12 @@ class ScreenRecorderService {
           targetHeight: isPreview ? height ~/ 2 : height,
         );
         await completer.future;
-        debugPrint('Frame captured successfully');
       } finally {
         calloc.free(bmi);
         calloc.free(pixels);
       }
     } catch (e) {
-      debugPrint('Frame capture error: $e');
+      throw Exception('Frame capture error: $e');
     } finally {
       if (hBitmap != null) DeleteObject(hBitmap);
       if (hdcMemory != null) DeleteDC(hdcMemory);

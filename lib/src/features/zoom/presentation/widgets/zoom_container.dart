@@ -30,7 +30,7 @@ class _ZoomContainerState extends ConsumerState<ZoomContainer> with SingleTicker
     );
     
     // Initialize with default values
-    final settings = const ZoomSettings();
+    const settings = ZoomSettings();
     _scaleAnimation = Tween<double>(
       begin: settings.scale,
       end: settings.scale,

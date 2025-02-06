@@ -48,7 +48,6 @@ class FFmpegService {
 
     // Add system audio input if enabled
     if (captureSystemAudio) {
-      print('Adding system audio capture');
       args.addAll([
         '-f', 'dshow',
         // Add audio buffer and sync options
@@ -113,7 +112,6 @@ class FFmpegService {
     args.add('-y');
     args.add(outputPath);
 
-    print('FFmpeg command: ffmpeg ${args.join(' ')}');
     return args;
   }
 

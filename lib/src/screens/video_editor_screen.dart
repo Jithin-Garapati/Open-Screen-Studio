@@ -24,13 +24,6 @@ import '../features/background/providers/background_settings_provider.dart';
 import 'dart:convert';
 import '../services/video_export_service.dart';
 
-enum VideoExportFormat {
-  mp4_169, // 16:9
-  mp4_916, // 9:16 (vertical)
-  mp4_11,  // 1:1 (square)
-  gif
-}
-
 class VideoEditorScreen extends ConsumerStatefulWidget {
   final String videoPath;
   const VideoEditorScreen({super.key, required this.videoPath});
@@ -102,9 +95,9 @@ class ExportControls extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ).copyWith(
-                  overlayColor: MaterialStateProperty.resolveWith<Color?>(
-                    (Set<MaterialState> states) {
-                      if (states.contains(MaterialState.hovered)) {
+                  overlayColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.hovered)) {
                         return const Color(0xFF00E5FF).withOpacity(0.15);
                       }
                       return null;
@@ -146,7 +139,7 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
   bool _isFullScreen = false;
   double _playbackSpeed = 1.0;
   final VideoExportFormat _selectedFormat = VideoExportFormat.mp4_169;
-  bool _showEditor = true;
+  final bool _showEditor = true;
   final int _lastSeekTime = 0;
   
   // Zoom state
@@ -331,118 +324,67 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
   }
 
   Future<void> _exportVideo() async {
+    if (_isExporting) return;
     setState(() => _isExporting = true);
-    
+
     try {
-      // Get original file name without extension
-      final originalFileName = path.basenameWithoutExtension(widget.videoPath);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final originalDir = path.dirname(widget.videoPath);
+      final videoName = path.basenameWithoutExtension(widget.videoPath);
       
-      // Create a folder with original name + timestamp
-      final exportFolder = path.join(originalDir, '${originalFileName}_$timestamp');
-      await Directory(exportFolder).create();
+      // Create exports directory if it doesn't exist
+      final exportsDir = path.join(path.dirname(widget.videoPath), 'Exports');
+      await Directory(exportsDir).create(recursive: true);
+      
+      // Create specific export folder for this video
+      final exportFolder = path.join(exportsDir, '${videoName}_$timestamp');
+      await Directory(exportFolder).create(recursive: true);
+      
+      // Setup export paths
+      final outputPath = path.join(exportFolder, 'exported_video.mp4');
+      final cursorDataPath = path.join(exportFolder, 'cursor_data.json');
+      final zoomConfigPath = path.join(exportFolder, 'zoom_config.json');
 
-      // Use original file name for the exported files
-      final newVideoPath = path.join(exportFolder, '$originalFileName.mp4');
-      final newCursorDataPath = path.join(exportFolder, '${originalFileName}_cursor_data.json');
-      final newZoomDataPath = path.join(exportFolder, '${originalFileName}_zoom_data.json');
-      final originalCursorDataPath = widget.videoPath.replaceAll('.mp4', '_cursor_data.json');
-
-      // Copy the video file
-      await File(widget.videoPath).copy(newVideoPath);
-
-      // Copy cursor data if it exists
-      if (File(originalCursorDataPath).existsSync()) {
-        await File(originalCursorDataPath).copy(newCursorDataPath);
+      // Copy cursor data if it exists in original location
+      final originalCursorPath = path.join(
+        path.dirname(widget.videoPath),
+        '${videoName}_cursor_data.json'
+      );
+      if (await File(originalCursorPath).exists()) {
+        await File(originalCursorPath).copy(cursorDataPath);
       }
 
-      // Export settings data
-      final timeline = ref.read(timelineProvider);
-      final zoomSettings = ref.read(timelineZoomSettingsProvider);
-      final zoomLayers = timeline.segments.where((s) => s.layerType == LayerType.zoom);
-      
-      // Prepare zoom data if zoom layers exist
-      final zoomData = zoomLayers.isNotEmpty ? {
-        'type': 'Mixed',  // Support both auto and manual layers
-        'manualLayers': zoomLayers
-          .where((layer) => !(zoomSettings[layer.properties['id']]?.isAutoZoom ?? true))
-          .map((layer) {
-            final settings = zoomSettings[layer.properties['id']];
-            return {
-              'startFrame': layer.startTime ~/ 33.33,
-              'endFrame': layer.endTime ~/ 33.33,
-              'startScale': settings?.scale ?? 1.0,
-              'endScale': settings?.scale ?? 1.0,
-              'targetX': settings?.target.dx ?? 0.5,
-              'targetY': settings?.target.dy ?? 0.5
-            };
-          }).toList(),
-        'autoLayers': zoomLayers
-          .where((layer) => zoomSettings[layer.properties['id']]?.isAutoZoom ?? true)
-          .map((layer) {
-            final settings = zoomSettings[layer.properties['id']];
-            return {
-              'startFrame': layer.startTime ~/ 33.33,
-              'endFrame': layer.endTime ~/ 33.33,
-              'minScale': 1.0,
-              'maxScale': settings?.scale ?? 2.5,
-              'followSpeed': 0.3,
-              'smoothing': 0.7
-            };
-          }).toList(),
-        'defaults': {
-          'defaultScale': 1.0,
-          'transitionDuration': 0.5,
-          'minScale': 1.0,
-          'maxScale': 2.5,
-          'followSpeed': 0.3,
-          'smoothing': 0.7
-        }
-      } : null;
+      // Export zoom configuration
+      await _exportZoomConfig(zoomConfigPath);
 
-      // Prepare all settings data
-      final settingsData = {
-        'cursor': {
-          'size': ref.read(cursorSettingsProvider).size,
-          'opacity': ref.read(cursorSettingsProvider).opacity,
-          'tintColor': ref.read(cursorSettingsProvider).tintColor?.value,
-        },
-        'background': {
-          'color': ref.read(backgroundSettingsProvider).color?.value ?? Colors.black.value,
-          'cornerRadius': ref.read(backgroundSettingsProvider).cornerRadius,
-          'scale': ref.read(backgroundSettingsProvider).scale,
-        },
-        if (zoomData != null) 'zoom': zoomData
-      };
-
-      // Write settings data to file
-      await File(newZoomDataPath).writeAsString(jsonEncode(settingsData));
-
-      // Process the video using native component
-      final exportService = VideoExportService();
-      final exportedVideoPath = await exportService.processVideo(
-        videoPath: newVideoPath,
-        cursorDataPath: newCursorDataPath,
-        zoomDataPath: newZoomDataPath
+      // Export video with all configurations
+      await VideoExportService.exportVideo(
+        inputPath: widget.videoPath,
+        outputPath: outputPath,
+        cursorDataPath: cursorDataPath,
+        zoomConfigPath: zoomConfigPath,
+        playbackSpeed: _playbackSpeed,
+        format: _selectedFormat,
       );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            duration: const Duration(seconds: 3),
-            content: Text('Exported to: ${path.basename(exportedVideoPath)}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Export completed successfully!'),
+                const SizedBox(height: 4),
+                Text('Location: $exportFolder', style: TextStyle(fontSize: 12)),
+              ],
+            ),
           ),
         );
       }
     } catch (e) {
-      print('Export error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to export video: $e'),
-            duration: const Duration(seconds: 3),
-          ),
+          SnackBar(content: Text('Export failed: ${e.toString()}')),
         );
       }
     } finally {
@@ -450,6 +392,77 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> with Tick
         setState(() => _isExporting = false);
       }
     }
+  }
+
+  Future<void> _exportZoomConfig(String configPath) async {
+    // Get settings from providers
+    final timelineZoomSettings = ref.read(timelineZoomSettingsProvider);
+    final cursorSettings = ref.read(cursorSettingsProvider);
+    final backgroundSettings = ref.read(backgroundSettingsProvider);
+    final timeline = ref.read(timelineProvider);
+
+    // Get video FPS for frame calculations
+    final fps = player.state.duration.inMilliseconds > 0 
+        ? (player.state.duration.inMilliseconds / 1000.0)
+        : 30.0;  // Fallback to 30fps if duration is not available
+
+    // Prepare zoom configuration matching C++ backend format
+    final zoomConfig = {
+      'zoom': {
+        'type': 'Auto',  // or 'Manual' based on settings
+        'autoLayers': timeline.segments
+            .where((segment) => segment.isLayer && segment.layerType == LayerType.zoom)
+            .map((layer) {
+          final settings = timelineZoomSettings[layer.properties['id']];
+          return {
+            'startFrame': layer.startTime ~/ (1000 / fps),
+            'endFrame': layer.endTime ~/ (1000 / fps),
+            'minScale': 1.0,
+            'maxScale': settings?.scale ?? 2.0,
+            'followSpeed': 0.3,
+            'smoothing': 0.7,
+          };
+        }).toList(),
+        'manualLayers': timeline.segments
+            .where((segment) => 
+              segment.isLayer && 
+              segment.layerType == LayerType.zoom && 
+              !(timelineZoomSettings[segment.properties['id']]?.isAutoZoom ?? true))
+            .map((layer) {
+          final settings = timelineZoomSettings[layer.properties['id']];
+          return {
+            'startFrame': layer.startTime ~/ (1000 / fps),
+            'endFrame': layer.endTime ~/ (1000 / fps),
+            'startScale': 1.0,
+            'endScale': settings?.scale ?? 2.0,
+            'targetX': settings?.target.dx ?? 0.5,
+            'targetY': settings?.target.dy ?? 0.5,
+          };
+        }).toList(),
+        'defaults': {
+          'defaultScale': 1.0,
+          'transitionDuration': 0.5,
+          'minScale': 1.0,
+          'maxScale': 2.5,
+          'followSpeed': 0.3,
+          'smoothing': 0.7,
+        }
+      },
+      'cursor': {
+        'size': cursorSettings.size,
+        'opacity': cursorSettings.opacity,
+        'tintColor': cursorSettings.tintColor?.value ?? 0,
+        'hasTint': cursorSettings.tintColor != null,
+      },
+      'background': {
+        'color': backgroundSettings.color?.value ?? 0xFF000000,
+        'cornerRadius': backgroundSettings.cornerRadius,
+        'padding': backgroundSettings.padding,
+        'scale': backgroundSettings.scale,
+      }
+    };
+    
+    await File(configPath).writeAsString(jsonEncode(zoomConfig));
   }
 
   void _updatePlaybackSpeed(double speed) {
